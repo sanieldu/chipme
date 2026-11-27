@@ -75,15 +75,6 @@ button { cursor: pointer; }
   transition: transform .6s var(--ease-enter);
 }
 .brand:hover .brand-chip { transform: rotate(90deg); }
-.steps { display: flex; gap: 4px; font-size: 13px; }
-.steps span {
-  padding: 5px 10px; border-radius: 999px; color: var(--muted);
-  transition: color .2s var(--ease), background-color .2s var(--ease);
-}
-.steps span i { font-style: normal; font-variation-settings: "MONO" 1; opacity: .6; margin-right: 6px; }
-.steps span.on { background: var(--surface); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
-.steps span.done { color: var(--ink-2); }
-
 .app { max-width: 980px; margin: 0 auto; padding: 8px 16px 120px; }
 
 /* ---------- type ---------- */
@@ -445,8 +436,6 @@ details.card[open] > summary { margin-bottom: 8px; }
   .pcard { flex-wrap: wrap; }
   .pcard .actions { width: 100%; }
   .pcard .actions .btn { flex: 1; }
-  .steps span { padding: 5px 8px; }
-  .steps span i { display: none; }
   .side-stack i { height: 4px; width: 18px; }
   .seat .avatar { width: 34px; height: 34px; font-size: 11px; }
   .seat-tag { max-width: 76px; }
@@ -479,3 +468,30 @@ select.input { appearance: none; padding-right: 30px; background-image: linear-g
 .advice { margin: 14px 0 0; padding: 12px 14px; border-radius: 10px; background: var(--bg); font-size: 14px; line-height: 1.5; }
 .advice b { font-weight: 500; }
 @media (max-width: 560px) { .cluster { transform: scale(.64); } }
+
+/* money in play: a figure above the table, in the drawing's annotation style */
+.bank {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 12px 24px; flex-wrap: wrap;
+  margin: 18px 0 0; padding-bottom: 14px; border-bottom: 1px solid var(--line);
+}
+.bank-fig { display: flex; flex-direction: column; gap: 2px; }
+.bank-lbl { font-size: 12px; color: var(--muted); font-variation-settings: "MONO" 1; }
+.bank-val { font-size: clamp(30px, 7vw, 42px); line-height: 1.05; letter-spacing: -.02em; font-variation-settings: "MONO" 1; }
+.bank-val.bump { animation: bump .6s var(--ease-enter); }
+.bank-meta { display: flex; gap: 4px 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); font-variation-settings: "MONO" 1; }
+.bank-meta b { color: var(--ink); font-weight: 450; }
+.seat.left .seat-tag em { color: var(--ink-2); }
+.seat.left .seat-tag b { text-decoration-color: var(--line-2); }
+.pcard.left .name { text-decoration: none; }
+
+/* settle: a player who already cashed out */
+.left-amt { display: flex; flex-direction: column; align-items: flex-end; font-size: 12px; font-variation-settings: "MONO" 1; }
+.left-amt b { font-size: 17px; font-weight: 400; color: var(--ink); }
+
+/* home */
+.saved { display: grid; gap: 0; padding: 4px 16px; }
+.saved-row { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.saved-row:last-child { border-bottom: 0; }
+.saved-row b { font-weight: 450; text-align: right; }
+.lead-in { font-size: 14px; margin: 0 0 12px; }
+.pill.locked { opacity: 1; cursor: default; background: var(--ink-2); border-color: var(--ink-2); }

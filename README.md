@@ -4,9 +4,12 @@ A minimal poker buy-in counter and settle-up ledger. No build step, no backend: 
 
 ## Features
 - Pick a buy-in ($20, $25, $50 or a custom amount) and seat your friends at a drawn table, one seat each
-- Pick the blinds (10¢/20¢ up to $2/$5, or custom) and get the chips to hand each player, chosen by the optimiser in `chips.js` (below), plus the totals for the table and a warning for short stacks
-- During the game the table shows the money in play (everything bought in so far), each seat's buy-ins and its chips as overlapping stacks
+- Pick the blinds (10¢/20¢ up to $2/$5, or custom), then the chips your set has: the ones the blinds need are always in, and you choose the rest (such as $2 and $5) and the highest chip
+- Get the chips to hand each player, counted by the optimiser in `chips.js` (below), plus the totals for the table and a warning for short stacks
+- During the game, the money in play (everything bought in, less early cash-outs) sits above the table; the table shows each seat's buy-ins and its chips as overlapping stacks
 - Rebuy for the same, more or less than the buy-in; bust players out and buy them back in
+- Cash out one player mid-game: count just their stack, their result is fixed and they're settled with everyone at the end
+- The chipme logo opens a home screen with the saved game, to resume it or start a new one
 - Joining mid-game asks where the newcomer sits and where the big blind is, and says whether they post a big-blind premium, wait for the blind, or wait for the button
 - Ledger of every action, with undo and per-entry delete
 - Cash-out page: enter final stacks, see whether the chips balance (or by how much they're off), and get the fewest e-transfers needed to settle up
@@ -15,7 +18,7 @@ A minimal poker buy-in counter and settle-up ledger. No build step, no backend: 
 - Everything autosaves to `localStorage`, so refreshing or closing the tab doesn't lose the game
 
 ## How the chips are chosen
-`chips.js` plans one chip set per game from the blinds and the main buy-in. A stack has to stay playable: the smallest chip divides both blinds, every value can be broken into the ones below it, and the chips at or under the big blind cover about 10 big blinds. Among the sets and counts that pass (values from 5¢ to $100, including 20¢ and $2), it takes the one with the fewest chips, with the smallest values counting extra and a small charge for each extra value. A rebuy of another size is counted in the same set.
+With no chips picked yet, `chips.js` suggests a set from the blinds and the main buy-in; once you pick your chips it counts with exactly those. A stack has to stay playable: the smallest chip divides both blinds, every value can be broken into the ones below it, and the chips at or under the big blind cover about 10 big blinds. Among the sets and counts that pass (values from 5¢ to $100, including 20¢ and $2), it takes the one with the fewest chips, with the smallest values counting extra and a small charge for each extra value. A rebuy of another size is counted in the same set.
 
 ```bash
 node chips.test.js

@@ -73,7 +73,10 @@
   const initials = (n) => n.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   const player = (id) => state.players.find((p) => p.id === id);
   const totalIn = (pid) => state.log.filter((l) => l.pid === pid && (l.type === "buyin" || l.type === "rebuy")).reduce((a, l) => a + l.amount, 0);
-  const inPlay = () => state.players.reduce((a, p) => a + totalIn(p.id), 0);
+  const totalOut = (pid) => state.log.filter((l) => l.pid === pid && l.type === "cashout").reduce((a, l) => a + l.amount, 0);
+  // money in play: everything bought in, less what players took home when they cashed out early
+  const inPlay = () => state.players.reduce((a, p) => a + totalIn(p.id) - totalOut(p.id), 0);
+  const seated = (p) => !p.busted && !p.left;
   const entries = (pid) => state.log.filter((l) => l.pid === pid && (l.type === "buyin" || l.type === "rebuy")).length;
   const time = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
@@ -84,11 +87,59 @@
   // The table's chip set is planned once from the blinds and the main buy-in, so everyone plays
   // with the same chips; a rebuy of another size is counted in that same set.
   const planCache = new Map();
-  function tablePlan(blinds) {
+  // The chips a game can use: the ones the blinds need are always in (the smallest chip that
+  // divides both blinds, plus a chip for each blind); the host picks the rest and the highest chip.
+  function chipOptions(blinds) {
+    const C = ChipOpt.CANDS;
+    const d0 = [...C].reverse().find((v) => blinds.sb % v === 0 && blinds.bb % v === 0) || 5;
+    const required = [...new Set([d0, blinds.sb, blinds.bb].filter((v) => C.includes(v)))].sort((a, b) => a - b);
+    const values = C.filter((v) => v >= d0 && v % d0 === 0);
+    return { d0, required, values, tops: values.filter((v) => v >= required[required.length - 1]) };
+  }
+  // the chips in use: the host's pick for these blinds, else the optimiser's suggestion
+  function chipSetFor(blinds) {
+    const key = `${blinds.sb}/${blinds.bb}`;
+    if (state.chips && state.chips.key === key) return state.chips.set;
+    const { required } = chipOptions(blinds);
     const T = Math.round(state.buyIn * 100);
-    const key = `${blinds.sb}/${blinds.bb}/${T}`;
-    if (!planCache.has(key)) planCache.set(key, ChipOpt.plan(blinds, T));
-    return planCache.get(key);
+    const k = `${key}/${T}`;
+    if (!planCache.has(k)) planCache.set(k, ChipOpt.plan(blinds, T));
+    return [...new Set([...planCache.get(k).set, ...required])].sort((a, b) => a - b);
+  }
+  // counts for `T` cents in the chosen set; a stack too small for every chip drops the biggest
+  // ones first, so players still get small chips to post blinds and make change
+  function countsIn(set, T, bb) {
+    for (let k = set.length; k >= 1; k--) {
+      const c = ChipOpt.counts(set.slice(0, k), T, bb);
+      if (c) return set.map((_, i) => c.n[i] || 0);
+    }
+    const c = ChipOpt.counts(set, T, bb, false);
+    return c ? c.n : set.map((d, i) => (i === 0 ? T / d : 0));
+  }
+  function tablePlan(blinds) {
+    const set = chipSetFor(blinds);
+    const T = Math.round(state.buyIn * 100);
+    const t = T - (T % set[0]);
+    return { set, n: countsIn(set, t, blinds.bb) };
+  }
+  function chipsHTML(blinds) {
+    const { required, values, tops } = chipOptions(blinds);
+    const set = chipSetFor(blinds);
+    const top = set[set.length - 1];
+    const shown = values.filter((v) => v <= top);
+    const gaps = set.slice(1).map((v, i) => [set[i], v]).filter(([a, b]) => b / a > 5);
+    return `
+      <p class="muted lead-in">Which chips does your set have? The ones the blinds need are always in.</p>
+      <div class="pills" id="denoms">
+        ${shown.map((v) => required.includes(v)
+          ? `<button class="pill sel locked" type="button" disabled title="Needed for the blinds">${blindLabel(v)}</button>`
+          : `<button class="pill ${set.includes(v) ? "sel" : ""}" type="button" data-d="${v}" aria-pressed="${set.includes(v)}">${blindLabel(v)}</button>`).join("")}
+      </div>
+      <div class="row custom-row">
+        <label class="muted" for="topChip">Highest chip</label>
+        <select id="topChip" class="input grow">${tops.map((v) => `<option value="${v}" ${v === top ? "selected" : ""}>${blindLabel(v)}</option>`).join("")}</select>
+      </div>
+      ${gaps.length ? `<p class="muted hint">Big jump from ${gaps.map(([a, b]) => `${blindLabel(a)} to ${blindLabel(b)}`).join(" and ")}: making change will take a lot of small chips.</p>` : ""}`;
   }
   const chipLook = (set) => set.map((c, i) => (i === 0 ? WHITE : LOOK[c] || WHITE));
 
@@ -100,8 +151,7 @@
     total -= leftover;
     let n = planned;
     if (total !== Math.round(state.buyIn * 100) - (Math.round(state.buyIn * 100) % set[0])) {
-      const c = ChipOpt.counts(set, total, blinds.bb) || ChipOpt.counts(set, total, blinds.bb, false);
-      n = c ? c.n : set.map((d, i) => (i === 0 ? total / d : 0));
+      n = countsIn(set, total, blinds.bb);
     }
     const look = chipLook(set);
     const rows = set.map((c, i) => ({ cents: c, n: n[i], ...look[i] })).filter((r) => r.n > 0).reverse();
@@ -128,17 +178,16 @@
   /* ---------------- render ---------------- */
   // the entrance plays on a screen's first paint only, never on the re-renders a tap causes
   let shownStage = null;
+  let home = false;   // the home screen sits over a saved game without touching it
+  const gameOn = () => state.stage !== "setup" || state.log.length > 0;
   function render() {
-    const order = ["setup", "table", "settle"];
-    document.querySelectorAll("#steps span").forEach((el) => {
-      const i = order.indexOf(el.dataset.step), cur = order.indexOf(state.stage);
-      el.className = i === cur ? "on" : i < cur ? "done" : "";
-    });
-    const fresh = shownStage !== state.stage;
-    shownStage = state.stage;
+    const screen = home ? "home" : state.stage;
+    const fresh = shownStage !== screen;
+    shownStage = screen;
     app.classList.toggle("enter", fresh && !reduced);
     if (fresh) { seatPos = {}; boardShown = false; }
-    if (state.stage === "setup") renderSetup(fresh);
+    if (home) renderHome();
+    else if (state.stage === "setup") renderSetup(fresh);
     else if (state.stage === "table") renderTable(fresh);
     else renderSettle();
   }
@@ -200,18 +249,20 @@
       const x = 50 + 50 * Math.cos(a), y = 50 + 50 * Math.sin(a);
       const sx = 50 + 32 * Math.cos(a), sy = 48 + 19 * Math.sin(a);   // stack spot on the felt
       const tin = totalIn(p.id);
-      const stack = mode === "table" && tin > 0 && !p.busted
+      const stack = mode === "table" && tin > 0 && seated(p)
         ? `<div class="felt-stack" style="left:${sx}%;top:${sy}%">${clusterHTML(tin, CHIP_COLORS[i % 7])}</div>` : "";
+      const tag = p.left ? `left · ${money(totalOut(p.id))}` : p.busted ? "out" : money(tin);
       const code = `S-${String(i + 1).padStart(2, "0")}`;
-      return `${stack}<div class="seat ${p.busted ? "out" : ""}" data-seat="${p.id}" data-x="${x}" data-y="${y}" style="left:${x}%;top:${y}%">
+      return `${stack}<div class="seat ${seated(p) ? "" : "out"} ${p.left ? "left" : ""}" data-seat="${p.id}" data-x="${x}" data-y="${y}" style="left:${x}%;top:${y}%">
           ${avatar(p)}
-          <span class="seat-tag"><i>${code}</i><b>${esc(p.name)}</b>${mode === "table" ? `<em>${p.busted ? "out" : money(tin)}</em>` : ""}</span>
+          <span class="seat-tag"><i>${code}</i><b>${esc(p.name)}</b>${mode === "table" ? `<em>${tag}</em>` : ""}</span>
           ${mode === "setup" ? `<button class="seat-x" data-rm="${p.id}" aria-label="Remove ${esc(p.name)}">×</button>` : ""}
         </div>`;
     }).join("");
-    const center = mode === "table"
-      ? `<div class="felt-center" id="pot"><span class="felt-label">Money in play</span><span class="felt-pot" id="potTotal">${money(inPlay())}</span></div>`
-      : `<div class="felt-center"><span class="felt-logo">chipme</span><span class="felt-label">${n ? `${String(n).padStart(2, "0")} seat${n === 1 ? "" : "s"} taken` : "Add a player to take a seat"}</span></div>`;
+    const label = mode === "table"
+      ? (state.blinds ? `No-limit · ${blindsText(state.blinds)}` : "No-limit hold'em")
+      : n ? `${String(n).padStart(2, "0")} seat${n === 1 ? "" : "s"} taken` : "Add a player to take a seat";
+    const center = `<div class="felt-center"><span class="felt-logo">chipme</span><span class="felt-label">${label}</span></div>`;
     const blinds = state.blinds ? blindsText(state.blinds) : "—";
     return `<div class="poker ${mode} ${draw && !reduced ? "draw" : ""}">
       <span class="poker-note tl">T-01 · No-limit hold'em</span>
@@ -232,6 +283,40 @@
         el.animate([{ left: prev[0] + "%", top: prev[1] + "%" }, { left: x + "%", top: y + "%" }], { duration: 800, easing: "cubic-bezier(.22,1,.36,1)" });
     });
     seatPos = next;
+  }
+
+  /* ----- home: the saved game waits here untouched ----- */
+  function renderHome() {
+    const where = { setup: "Seating players", table: "Playing", settle: "Counting chips" }[state.stage];
+    const n = state.players.length;
+    const started = state.startedAt ? time(state.startedAt) : null;
+    app.innerHTML = `
+      ${heading("chipme")}
+      <p class="sub">Buy-ins, rebuys and the settle-up for a home poker game.</p>
+      ${sec("Saved game", `
+        <div class="card saved">
+          <div class="saved-row"><span class="muted">Status</span><b>${where}</b></div>
+          <div class="saved-row"><span class="muted">Players</span><b>${n ? state.players.map((p) => esc(p.name)).join(", ") : "None yet"}</b></div>
+          <div class="saved-row"><span class="muted">Money in play</span><b class="mono">${money(inPlay())}</b></div>
+          ${started ? `<div class="saved-row"><span class="muted">Dealt</span><b class="mono">${started}</b></div>` : ""}
+        </div>
+        <div class="row wrap" style="margin-top:14px">
+          <button class="btn primary" id="resume">Resume game <kbd>↵</kbd></button>
+          <button class="btn" id="fresh">Start a new game</button>
+        </div>`, 2)}`;
+    $("#resume").onclick = leaveHome;
+    $("#fresh").onclick = confirmReset;
+    $("#resume").focus({ preventScroll: true });
+  }
+  function screenSwap(fn) {
+    if (document.startViewTransition && !reduced) document.startViewTransition(() => { fn(); scrollTo(0, 0); });
+    else { fn(); scrollTo(0, 0); }
+  }
+  function leaveHome() { screenSwap(() => { home = false; render(); }); }
+  function openHome() {
+    if (!gameOn()) { scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" }); return; }
+    if (home) return;
+    screenSwap(() => { home = true; render(); });
   }
 
   /* ----- setup ----- */
@@ -275,7 +360,9 @@
             <div class="money grow"><input id="bbIn" class="input" type="number" inputmode="decimal" min="0.05" step="0.05" placeholder="Big" aria-label="Big blind" value="${bl ? bl.bb / 100 : ""}" /></div>
             <button class="btn" type="submit">Set</button>
           </form>` : ""}
-        ${breakdownHTML(state.buyIn, n)}`, 4)}
+        ${bl ? "" : breakdownHTML(state.buyIn, n)}`, 4)}
+
+      ${bl ? sec("Chips", `${chipsHTML(bl)}${breakdownHTML(state.buyIn, n)}`, 5) : ""}
 
       <div class="bar"><div class="bar-inner">
         <button class="btn felt block" id="start" ${state.players.length < 2 || !(state.buyIn > 0) ? "disabled" : ""}>
@@ -298,6 +385,19 @@
       blindsCustomOpen = false;
       const { sb, bb } = BLINDS[+b.dataset.b];
       commit((s) => { s.blinds = { sb, bb }; });
+    };
+    const dn = $("#denoms");
+    if (dn) dn.onclick = (e) => {
+      const b = e.target.closest("[data-d]"); if (!b) return;
+      const v = +b.dataset.d, set = chipSetFor(bl);
+      const next = set.includes(v) ? set.filter((x) => x !== v) : [...set, v].sort((a, c) => a - c);
+      commit((s) => { s.chips = { key: `${bl.sb}/${bl.bb}`, set: next }; });
+    };
+    const tc = $("#topChip");
+    if (tc) tc.onchange = () => {
+      const top = +tc.value, { required } = chipOptions(bl);
+      const next = [...new Set([...chipSetFor(bl).filter((x) => x < top), top, ...required])].sort((a, c) => a - c);
+      commit((s) => { s.chips = { key: `${bl.sb}/${bl.bb}`, set: next }; });
     };
     const cb = $("#customBlinds");
     if (cb) cb.onsubmit = (e) => {
@@ -336,35 +436,47 @@
   let shownPot = null;   // the pot figure counts up to its new value instead of jumping
   function renderTable(fresh) {
     const total = inPlay();   // everything bought in so far, not a hand's pot
-    const active = state.players.filter((p) => !p.busted).length;
+    const active = state.players.filter(seated).length;
     const rebuys = state.log.filter((l) => l.type === "rebuy").length;
+    const gone = state.players.filter((p) => p.left).length;
 
     app.innerHTML = `
-      <div class="reveal" style="--d:0">${tableHTML("table", fresh)}</div>
-      <div class="pot-meta reveal" style="--d:1">
-        <span><b>${active}/${state.players.length}</b> playing</span>
-        <span><b>${rebuys}</b> rebuy${rebuys === 1 ? "" : "s"}</span>
-        <span><b>${money(state.buyIn)}</b> buy-in</span>
-        ${state.blinds ? `<span><b>${blindsText(state.blinds)}</b> blinds</span>` : ""}
+      <div class="bank reveal" style="--d:0" id="pot">
+        <div class="bank-fig">
+          <span class="bank-lbl">Money in play</span>
+          <span class="bank-val" id="potTotal">${money(total)}</span>
+        </div>
+        <div class="bank-meta">
+          <span><b>${active}/${state.players.length}</b> playing</span>
+          <span><b>${rebuys}</b> rebuy${rebuys === 1 ? "" : "s"}</span>
+          ${gone ? `<span><b>${gone}</b> cashed out</span>` : ""}
+          <span><b>${money(state.buyIn)}</b> buy-in</span>
+        </div>
       </div>
+      <div class="reveal" style="--d:1">${tableHTML("table", fresh)}</div>
 
       ${sec(`Players <span class="muted mono">${String(state.players.length).padStart(2, "0")}</span>`, `
         <div class="players" id="players">
           ${state.players.map((p) => {
-            const n = entries(p.id);
+            const n = entries(p.id), tin = totalIn(p.id), tout = totalOut(p.id);
+            const tag = p.left ? `<span class="tag">left</span>` : p.busted ? `<span class="tag bust">out</span>` : n > 1 ? `<span class="tag">×${n}</span>` : "";
+            const meta = p.left
+              ? `cashed out ${money(tout)} · <span class="${tout - tin >= 0 ? "pos" : "neg"}">${money(tout - tin, true)}</span>`
+              : `${n} buy-in${n === 1 ? "" : "s"}${tout ? ` · cashed ${money(tout)}` : ""}`;
             return `
-            <div class="pcard ${p.busted ? "busted" : ""}" data-pid="${p.id}">
+            <div class="pcard ${seated(p) ? "" : "busted"} ${p.left ? "left" : ""}" data-pid="${p.id}">
               ${avatar(p)}
               <div class="info">
-                <div class="name">${esc(p.name)}${p.busted ? `<span class="tag bust">out</span>` : n > 1 ? `<span class="tag">×${n}</span>` : ""}</div>
-                <div class="meta">${n} buy-in${n === 1 ? "" : "s"}</div>
+                <div class="name">${esc(p.name)}${tag}</div>
+                <div class="meta">${meta}</div>
               </div>
-              <div class="in">${money(totalIn(p.id))}<small>in</small></div>
+              <div class="in">${money(tin)}<small>in</small></div>
               <div class="actions">
-                ${p.busted
-                  ? `<button class="btn small felt" data-act="rebuy" data-pid="${p.id}">Buy back in</button>`
-                  : `<button class="btn small" data-act="rebuy" data-pid="${p.id}">Rebuy</button>
-                     <button class="btn small danger" data-act="bust" data-pid="${p.id}">Bust</button>`}
+                ${seated(p)
+                  ? `<button class="btn small" data-act="rebuy" data-pid="${p.id}">Rebuy</button>
+                     <button class="btn small" data-act="cashout" data-pid="${p.id}">Cash out</button>
+                     <button class="btn small danger" data-act="bust" data-pid="${p.id}">Bust</button>`
+                  : `<button class="btn small felt" data-act="rebuy" data-pid="${p.id}">Buy back in</button>`}
               </div>
             </div>`;
           }).join("")}
@@ -386,6 +498,7 @@
     app.querySelectorAll("[data-act]").forEach((b) => b.onclick = () => {
       const p = player(b.dataset.pid);
       if (b.dataset.act === "rebuy") openRebuy(p);
+      else if (b.dataset.act === "cashout") openCashOut(p);
       else bust(p);
     });
     $("#addLate").onclick = openAddLate;
@@ -415,11 +528,11 @@
 
   function ledgerHTML() {
     if (!state.log.length) return `<div class="card empty">Nothing yet.</div>`;
-    const label = { buyin: "bought in", rebuy: "rebought", bust: "busted out", back: "back in" };
+    const label = { buyin: "bought in", rebuy: "rebought", bust: "busted out", back: "back in", cashout: "cashed out" };
     return `<details class="card"><summary>${state.log.length} entr${state.log.length === 1 ? "y" : "ies"}</summary>
       <ul class="ledger">${[...state.log].reverse().map((l) => {
         const p = player(l.pid); if (!p) return "";
-        const amt = l.type === "buyin" || l.type === "rebuy";
+        const amt = l.type === "buyin" || l.type === "rebuy" || l.type === "cashout";
         return `<li><span class="when">${time(l.ts)}</span><span class="grow"><b>${esc(p.name)}</b> ${label[l.type]}</span>
           ${amt ? `<span class="num">${money(l.amount)}</span>` : ""}
           <button class="x" data-del="${l.id}" aria-label="Delete entry">×</button></li>`;
@@ -431,7 +544,9 @@
       const p = player(l.pid);
       commit((s) => {
         s.log = s.log.filter((x) => x.id !== l.id);
-        if (l.type === "bust") { const pp = s.players.find((x) => x.id === l.pid); if (pp) pp.busted = false; }
+        const pp = s.players.find((x) => x.id === l.pid);
+        if (pp && l.type === "bust") pp.busted = false;
+        if (pp && l.type === "cashout") pp.left = false;
       }, { undoable: true, msg: `Removed ${p ? p.name + "'s " : ""}entry` });
       const d = app.querySelector("details.card"); if (d) d.open = true;
     });
@@ -447,10 +562,10 @@
   }
 
   function rebuy(p, amount) {
-    const wasBusted = p.busted;
+    const wasBusted = p.busted || p.left;
     commit((s) => {
       const pp = s.players.find((x) => x.id === p.id);
-      pp.busted = false;
+      pp.busted = false; pp.left = false;
       s.log.push({ id: uid(), pid: p.id, type: "rebuy", amount, ts: Date.now() });
     }, { undoable: true, msg: `${p.name} rebought for ${money(amount)}` });
     rebuyAnimation(p, amount, wasBusted);
@@ -458,15 +573,16 @@
 
   /* ----- settle ----- */
   function computeSettle() {
+    // a player's result = chips at the end + whatever they cashed out early - everything they put in
     const rows = state.players.map((p) => ({
-      p, in: totalIn(p.id),
-      final: p.final == null ? (p.busted ? 0 : null) : p.final,
+      p, in: totalIn(p.id), cashed: totalOut(p.id),
+      final: p.final == null ? (seated(p) ? null : 0) : p.final,
     }));
     const missing = rows.filter((r) => r.final == null);
     const tin = rows.reduce((a, r) => a + r.in, 0);
-    const tout = rows.reduce((a, r) => a + (r.final || 0), 0);
+    const tout = rows.reduce((a, r) => a + (r.final || 0) + r.cashed, 0);
     const diff = cents(tout - tin);
-    rows.forEach((r) => { r.net = cents((r.final || 0) - r.in); });
+    rows.forEach((r) => { r.net = cents((r.final || 0) + r.cashed - r.in); });
     return { rows, missing, tin, tout, diff };
   }
 
@@ -514,14 +630,16 @@
 
     app.innerHTML = `
       ${heading("Count", "the chips.")}
-      <p class="sub">Enter each final stack in dollars. Busted players already sit at $0.</p>
+      <p class="sub">Enter each final stack in dollars. Busted players sit at $0, and anyone who cashed out is already counted.</p>
 
       ${sec("Final stacks", `<div class="card">
         ${rows.map((r) => `
           <div class="stack-row">
             <div class="row">${avatar(r.p)}<div class="grow"><div class="who">${esc(r.p.name)}</div>
-              <div class="delta ${r.final == null ? "muted" : r.net > 0 ? "pos" : r.net < 0 ? "neg" : "muted"}" data-delta="${r.p.id}">in ${money(r.in)}${r.final == null ? "" : ` · ${money(r.net, true)}`}</div></div></div>
-            <div class="money"><input class="input" type="number" inputmode="decimal" min="0" step="0.01" data-final="${r.p.id}" value="${r.final ?? ""}" placeholder="0" aria-label="${esc(r.p.name)}'s final stack" /></div>
+              <div class="delta ${r.final == null ? "muted" : r.net > 0 ? "pos" : r.net < 0 ? "neg" : "muted"}" data-delta="${r.p.id}">in ${money(r.in)}${r.cashed && !r.p.left ? ` · cashed ${money(r.cashed)}` : ""}${r.final == null ? "" : ` · ${money(r.net, true)}`}</div></div></div>
+            ${r.p.left
+              ? `<div class="left-amt"><span class="muted">cashed out</span><b>${money(r.cashed)}</b></div>`
+              : `<div class="money"><input class="input" type="number" inputmode="decimal" min="0" step="0.01" data-final="${r.p.id}" value="${r.final ?? ""}" placeholder="0" aria-label="${esc(r.p.name)}'s final stack" /></div>`}
           </div>`).join("")}
       </div>`, 2)}
 
@@ -635,6 +753,45 @@
     });
   }
 
+  // One player leaves with their chips while everyone else keeps playing. Their result is fixed
+  // now; who pays whom is still worked out with everyone at the end.
+  function openCashOut(p) {
+    const tin = totalIn(p.id);
+    openModal(`
+      <form id="f">
+        <h3>Cash out · ${esc(p.name)}</h3>
+        <p class="muted" style="margin:0">Count just their stack. Everyone else keeps playing.</p>
+        <label class="field-lbl" for="amt">Leaving with</label>
+        <div class="money"><input id="amt" class="input" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0" /></div>
+        <p class="advice" id="advice"></p>
+        <div class="row" style="margin-top:14px"><button type="button" class="btn" data-close>Cancel</button><button class="btn felt grow">Cash out</button></div>
+      </form>`, (m) => {
+      const amt = $("#amt", m);
+      const show = () => {
+        const v = cents(parseFloat(amt.value));
+        if (!(v >= 0) || amt.value === "") { $("#advice", m).innerHTML = `Bought in for <b>${money(tin)}</b>.`; return; }
+        const net = cents(v - tin);
+        $("#advice", m).innerHTML = net === 0
+          ? `Bought in for <b>${money(tin)}</b>: they leave even.`
+          : `Bought in for <b>${money(tin)}</b>: they leave <b class="${net > 0 ? "pos" : "neg"}">${money(net, true)}</b>. They're settled up with everyone at the end of the night.`;
+      };
+      amt.addEventListener("input", show); show(); amt.focus();
+      $("#f", m).onsubmit = (e) => {
+        e.preventDefault();
+        const v = cents(parseFloat(amt.value));
+        if (!(v >= 0) || amt.value === "") return amt.focus();
+        if (v > inPlay()) return toast(`Only ${money(inPlay())} is in play`);
+        modal.close();
+        commit((s) => {
+          const pp = s.players.find((x) => x.id === p.id);
+          pp.left = true; pp.busted = false;
+          s.log.push({ id: uid(), pid: p.id, type: "cashout", amount: v, ts: Date.now() });
+        }, { undoable: true, msg: `${p.name} cashed out ${money(v)} (${money(v - tin, true)})` });
+        cashOutAnimation(p, v);
+      };
+    });
+  }
+
   // Where does the big blind fall for someone joining mid-game? Seats run clockwise in list order
   // and the big blind moves one seat clockwise each hand.
   function bbAdvice(name, afterId, bbId) {
@@ -721,8 +878,9 @@
       <div class="row" style="margin-top:14px"><button class="btn" data-close>Cancel</button><button class="btn danger" id="wipe">Clear all</button><button class="btn primary grow" id="keep">Keep players</button></div>`, (m) => {
       const reset = (keep) => {
         modal.close();
+        home = false;
         go((s) => {
-          const players = keep ? s.players.map((p) => ({ ...p, busted: false, final: null })) : [];
+          const players = keep ? s.players.map((p) => ({ ...p, busted: false, left: false, final: null })) : [];
           Object.assign(s, fresh(), { buyIn: s.buyIn, blinds: s.blinds, players });
         }, { undoable: true, msg: keep ? "New game, same players" : "Table cleared" });
       };
@@ -897,6 +1055,26 @@
     });
   }
 
+  // CASH OUT: chips travel from the money-in-play figure back to the seat
+  function cashOutAnimation(p, amount) {
+    requestAnimationFrame(() => {
+      const seat = app.querySelector(`.seat[data-seat="${p.id}"] .avatar`);
+      const from = center($("#pot")), to = center(seat);
+      if (!reduced) for (let i = 0; i < 5; i++) {
+        const el = spawn("fx-chip", "", { left: from.x - 15 + "px", top: from.y - 15 + "px" });
+        el.style.setProperty("--c", CHIP_COLORS[i % CHIP_COLORS.length]);
+        const dx = to.x - from.x + rand(-20, 20), dy = to.y - from.y + rand(-10, 10);
+        animate(el, [
+          { transform: "translate(0,0) scale(.5)", opacity: 0 },
+          { transform: `translate(${dx / 2}px,${dy / 2 - 50}px) scale(.9)`, opacity: 1, offset: .45 },
+          { transform: `translate(${dx}px,${dy}px) scale(.6)`, opacity: 0 },
+        ], { duration: rand(1000, 1250), delay: i * 70, easing: "cubic-bezier(.65,0,.35,1)" });
+      }
+      floatText(money(amount), center(seat), "var(--ink)");
+      banner(`${p.name} cashes out`);
+    });
+  }
+
   function confetti() {
     if (reduced) return;
     for (let i = 0; i < 28; i++) {
@@ -915,7 +1093,7 @@
 
   // shortcuts: N seat or add a player, D deal, C count the chips; never while typing or in a dialog
   addEventListener("keydown", (e) => {
-    if (e.metaKey || e.ctrlKey || e.altKey || modal.open) return;
+    if (e.metaKey || e.ctrlKey || e.altKey || modal.open || home) return;
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return;
     const k = e.key.toLowerCase();
     if (k === "n") {
@@ -929,7 +1107,7 @@
     }
   });
 
-  $("#brand").onclick = () => { if (state.stage !== "setup" && !state.log.length) commit((s) => { s.stage = "setup"; }); };
+  $("#brand").onclick = openHome;
 
   render();
 })();
