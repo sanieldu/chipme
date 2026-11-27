@@ -1,7 +1,8 @@
 /* chipme chip optimiser: picks the chip values and the counts for a stack.
    A stack has to stay playable: the smallest chip divides both blinds, every value can be broken
-   into the ones below it, and chips at or under the big blind cover about 10 big blinds. Among the
-   stacks that pass, it takes the one with the fewest chips, counting the smallest values extra and
+   into the ones below it, chips at or under the big blind cover about 10 big blinds, and no value
+   holds more than about 40% of the stack (so ordinary bets don't need change). Among the stacks
+   that pass, it takes the one with the fewest chips, counting the smallest values extra and
    charging a little for every extra value in the set. Cents throughout. */
 (function (root) {
   "use strict";
@@ -27,6 +28,34 @@
     return { n, cost: best[N] };
   }
 
+  // the same, with at most caps[i] more chips of each value (bounded knapsack by binary splitting)
+  function fillCapped(set, r, cost, caps) {
+    const u = set[0];
+    if (r % u) return null;
+    const N = r / u, items = [];
+    set.forEach((d, i) => {
+      for (let left = Math.max(0, caps[i]), k = 1; left > 0; k *= 2) {
+        const take = Math.min(k, left);
+        items.push({ i, n: take, w: (take * d) / u, c: take * cost[i] });
+        left -= take;
+      }
+    });
+    const best = new Float64Array(N + 1).fill(Infinity);
+    const took = items.map(() => new Uint8Array(N + 1));
+    best[0] = 0;
+    items.forEach((it, j) => {
+      for (let v = N; v >= it.w; v--)
+        if (best[v - it.w] + it.c < best[v]) { best[v] = best[v - it.w] + it.c; took[j][v] = 1; }
+    });
+    if (!isFinite(best[N])) return null;
+    const n = set.map(() => 0);
+    for (let j = items.length - 1, v = N; j >= 0; j--) if (took[j][v]) { n[items[j].i] += items[j].n; v -= items[j].w; }
+    return { n, cost: best[N] };
+  }
+
+  // no value holds more than this share of a stack, so bets of a few big blinds don't need change
+  const SHARE = (k) => (k >= 4 ? 0.4 : k === 3 ? 0.5 : 1);
+
   // counts for one stack of `T` cents in `set`; null when the set can't make a playable stack.
   // strict = false drops the playability rules (a rebuy too small for them).
   function counts(set, T, bb, strict = true) {
@@ -48,7 +77,14 @@
     if (lowVal < L) return null;
     const used = set.reduce((a, d, i) => a + n[i] * d, 0);
     if (used > T) return null;
-    const rest = fill(set, T - used, cost);
+    // spread the rest: try the share cap, then a looser one, then none
+    let rest = null;
+    for (const share of [SHARE(k), Math.min(1, SHARE(k) + 0.2), 1]) {
+      if (share >= 1) { rest = fill(set, T - used, cost); break; }
+      const caps = set.map((d, i) => Math.floor((share * T) / d) - n[i]);
+      rest = fillCapped(set, T - used, cost, caps);
+      if (rest) break;
+    }
     if (!rest) return null;
     rest.n.forEach((x, i) => (n[i] += x));
     return { n, cost: n.reduce((a, x, i) => a + x * cost[i], 0) };

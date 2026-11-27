@@ -18,7 +18,7 @@ A minimal poker buy-in counter and settle-up ledger. No build step, no backend: 
 - Everything autosaves to `localStorage`, so refreshing or closing the tab doesn't lose the game
 
 ## How the chips are chosen
-With no chips picked yet, `chips.js` suggests a set from the blinds and the main buy-in; once you pick your chips it counts with exactly those. A stack has to stay playable: the smallest chip divides both blinds, every value can be broken into the ones below it, and the chips at or under the big blind cover about 10 big blinds. Among the sets and counts that pass (values from 5¢ to $100, including 20¢ and $2), it takes the one with the fewest chips, with the smallest values counting extra and a small charge for each extra value. A rebuy of another size is counted in the same set.
+With no chips picked yet, `chips.js` suggests a set from the blinds and the main buy-in; once you pick your chips it counts with exactly those. A stack has to stay playable: the smallest chip divides both blinds, every value can be broken into the ones below it, the chips at or under the big blind cover about 10 big blinds, and no one value holds more than about 40% of a stack, so ordinary bets of a few big blinds need no change. Among the sets and counts that pass (values from 5¢ to $100, including 20¢ and $2), it takes the one with the fewest chips, with the smallest values counting extra and a small charge for each extra value. A rebuy of another size is counted in the same set.
 
 ```bash
 node chips.test.js
