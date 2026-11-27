@@ -116,24 +116,98 @@ h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .08em; color: v
 .money .input { padding-left: 28px; }
 
 /* ---------- setup ---------- */
-.presets { display: flex; gap: 12px; flex-wrap: wrap; }
+/* ---------- clay chips (top view): 8 edge spots, darker inlay, thin gold ring, serif value ---------- */
+.chip {
+  --s: color-mix(in srgb, var(--c) 52%, #fff);
+  --i: color-mix(in srgb, var(--c) 62%, #000);
+  --t: #e3c27a;
+  width: var(--size, 40px); height: var(--size, 40px); flex: none; border-radius: 50%;
+  position: relative; display: inline-grid; place-items: center;
+  background:
+    radial-gradient(circle, var(--i) 0 53%, color-mix(in srgb, var(--c) 78%, #000) 54% 57%, transparent 58%),
+    repeating-conic-gradient(from -11.25deg, var(--s) 0 22.5deg, var(--c) 0 45deg);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.18), inset 0 -2px 3px rgba(0,0,0,.18), 0 2px 5px rgba(0,0,0,.28);
+  color: var(--t);
+  font-family: "Playfair Display", Georgia, serif; font-weight: 700;
+  font-size: calc(var(--size, 40px) * .3); letter-spacing: -.02em; line-height: 1;
+}
+.chip::before {
+  content: ""; position: absolute; inset: 26%; border-radius: 50%;
+  border: 1px solid currentColor; opacity: .45;
+}
+.chip > span { position: relative; }
+.chip.white { --s: #d4ad63; --i: #f8f6f0; --t: #b08638; }
+.chip.yellow { --i: #f2c230; --t: #1d1d1f; }
+
+/* chip stack seen from the side: striped edges */
+.side-stack { display: inline-flex; flex-direction: column-reverse; filter: drop-shadow(0 2px 2px rgba(0,0,0,.45)); }
+.side-stack i {
+  display: block; width: 26px; height: 6px; margin-top: -1px; border-radius: 3px / 2px;
+  background: repeating-linear-gradient(90deg, var(--c) 0 4px, color-mix(in srgb, var(--c) 45%, #fff) 4px 7px);
+  box-shadow: inset 0 -1px 0 rgba(0,0,0,.3);
+}
+
+.presets { display: flex; gap: 14px; flex-wrap: wrap; }
 .preset {
-  width: 68px; height: 68px; border-radius: 50%; border: 0; padding: 0;
-  font-weight: 800; font-size: 15px; color: #fff;
-  position: relative; display: grid; place-items: center;
-  transition: transform .25s cubic-bezier(.2,1.6,.4,1), box-shadow .2s;
-  background: var(--c);
-  box-shadow: inset 0 0 0 4px var(--c), inset 0 0 0 6px rgba(255,255,255,.85), inset 0 0 0 8px var(--c), 0 4px 10px rgba(0,0,0,.12);
+  border: 0; padding: 0; background: none; border-radius: 50%;
+  transition: transform .3s cubic-bezier(.2,1.6,.4,1);
 }
-.preset::after {
-  content: ""; position: absolute; inset: 0; border-radius: 50%;
-  background: repeating-conic-gradient(rgba(255,255,255,.9) 0 8deg, transparent 8deg 45deg);
-  -webkit-mask: radial-gradient(circle, transparent 62%, #000 63%, #000 72%, transparent 73%);
-          mask: radial-gradient(circle, transparent 62%, #000 63%, #000 72%, transparent 73%);
-  opacity: .9;
+.preset .chip { font-size: 24px; }
+.preset:hover { transform: translateY(-3px) rotate(-10deg); }
+.preset.sel { transform: translateY(-5px) scale(1.07); }
+.preset.sel .chip { box-shadow: inset 0 0 0 1px rgba(0,0,0,.18), 0 0 0 3px var(--bg), 0 0 0 5px var(--ink), 0 8px 16px rgba(0,0,0,.25); }
+
+/* ---------- poker table ---------- */
+.poker { position: relative; margin: 46px auto 50px; width: calc(100% - 60px); max-width: 600px; }
+.rail {
+  aspect-ratio: 1.75; border-radius: 999px; padding: 12px;
+  background: linear-gradient(160deg, #b07a48, #7a4a26 45%, #5a3519);
+  box-shadow: 0 18px 40px rgba(0,0,0,.28), inset 0 2px 0 rgba(255,255,255,.18), inset 0 -3px 6px rgba(0,0,0,.35);
 }
-.preset:hover { transform: translateY(-3px) rotate(-8deg); }
-.preset.sel { transform: translateY(-4px) scale(1.06); box-shadow: inset 0 0 0 4px var(--c), inset 0 0 0 6px rgba(255,255,255,.85), inset 0 0 0 8px var(--c), 0 0 0 3px var(--bg), 0 0 0 6px var(--ink); }
+.felt {
+  position: relative; height: 100%; border-radius: 999px; overflow: hidden;
+  background: radial-gradient(ellipse at 50% 40%, #2b2d31, #17181b 70%);
+  box-shadow: inset 0 0 0 2px rgba(0,0,0,.5), inset 0 6px 22px rgba(0,0,0,.6);
+}
+.felt-line { position: absolute; inset: 15% 12%; border-radius: 999px; border: 1.5px solid rgba(255,255,255,.5); }
+.felt-center {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; color: #fff; text-align: center; padding: 0 22%;
+}
+.felt-logo { font-family: "Playfair Display", Georgia, serif; font-weight: 700; font-size: clamp(16px, 5vw, 24px); letter-spacing: .04em; color: #e3c27a; }
+.felt-label { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: rgba(255,255,255,.6); }
+.felt-pot { font-size: clamp(26px, 8vw, 40px); font-weight: 800; letter-spacing: -.03em; line-height: 1; }
+.felt-pot.bump { animation: bump .5s cubic-bezier(.2,1.6,.4,1); }
+.felt-stack { position: absolute; transform: translate(-50%, -50%); pointer-events: none; }
+.poker .felt-stack { z-index: 1; }
+
+.seats { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.seat {
+  position: absolute; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; pointer-events: auto;
+}
+.seat .avatar {
+  width: 40px; height: 40px; font-size: 14px;
+  box-shadow: 0 0 0 3px #1b1c1f, 0 0 0 4px rgba(227,194,122,.7), 0 6px 12px rgba(0,0,0,.35);
+}
+.seat-tag {
+  margin-top: 6px; padding: 3px 9px; border-radius: 8px; text-align: center;
+  background: rgba(20,21,24,.92); color: #fff; box-shadow: 0 3px 8px rgba(0,0,0,.3);
+  max-width: 84px; line-height: 1.2;
+}
+.seat-tag b { display: block; font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seat-tag em { display: block; font-style: normal; font-size: 11px; font-weight: 700; color: #5fd38a; }
+.seat-x {
+  position: absolute; top: -6px; right: -10px; width: 20px; height: 20px; border-radius: 50%;
+  border: 0; padding: 0; background: var(--surface); color: var(--muted); font-size: 14px; line-height: 20px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.3);
+}
+.seat-x:hover { color: var(--red); }
+.seat.out { filter: grayscale(1); opacity: .65; }
+.seat.out .seat-tag em { color: #ff8a8e; }
+.seat.pop { animation: seatIn .55s cubic-bezier(.2,1.5,.4,1) both; }
+@keyframes seatIn { from { opacity: 0; transform: translate(-50%, -50%) scale(.2); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+.hint { font-size: 14px; margin: 8px 2px 0; }
 
 .pills { display: flex; flex-wrap: wrap; gap: 8px; }
 .pill {
@@ -158,21 +232,7 @@ h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .08em; color: v
 .breakdown.compact { margin-top: 12px; padding: 10px 12px; box-shadow: none; background: var(--surface-2); border-color: transparent; }
 .breakdown.compact .bd-head { font-size: 14px; margin-bottom: 6px; }
 .breakdown.compact li { font-size: 14px; }
-.denom-chip {
-  width: 28px; height: 28px; flex: none; border-radius: 50%;
-  display: grid; place-items: center; font-size: 9px; font-weight: 800; letter-spacing: -.02em;
-  background: var(--c); color: #fff;
-  box-shadow: inset 0 0 0 2px var(--c), inset 0 0 0 4px rgba(255,255,255,.75), inset 0 0 0 5px var(--c), 0 1px 3px rgba(0,0,0,.2);
-}
-.denom-chip[style*="#f4f2ec"] { color: #17181a; box-shadow: inset 0 0 0 2px var(--c), inset 0 0 0 4px #3e63dd, inset 0 0 0 5px var(--c), 0 0 0 1px #d6d3c8, 0 1px 3px rgba(0,0,0,.2); }
-.breakdown.compact .denom-chip { width: 24px; height: 24px; font-size: 8px; }
-
-.player-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
-.player-list li {
-  display: flex; align-items: center; gap: 12px;
-  padding: 10px 12px; border-radius: 12px; background: var(--surface-2);
-  animation: slideIn .35s cubic-bezier(.2,1.2,.4,1);
-}
+.breakdown .chip::before { inset: 24%; }
 .avatar {
   width: 34px; height: 34px; flex: none; border-radius: 50%;
   display: grid; place-items: center; font-weight: 700; font-size: 14px; color: #fff;
@@ -182,22 +242,7 @@ h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .08em; color: v
 .x:hover { background: var(--line); color: var(--ink); }
 
 /* ---------- table ---------- */
-.pot {
-  position: relative; overflow: hidden;
-  background: radial-gradient(120% 140% at 50% 0%, var(--felt-2), var(--felt));
-  color: #fff; border-radius: 22px; padding: 22px 20px;
-  box-shadow: inset 0 0 0 6px rgba(0,0,0,.12), var(--shadow);
-}
-.pot-label { font-size: 13px; text-transform: uppercase; letter-spacing: .1em; opacity: .75; font-weight: 700; }
-.pot-total { font-size: clamp(40px, 11vw, 64px); font-weight: 800; letter-spacing: -.04em; line-height: 1; margin: 6px 0 10px; }
-.pot-total.bump { animation: bump .5s cubic-bezier(.2,1.6,.4,1); }
-.pot-meta { display: flex; gap: 16px; font-size: 14px; opacity: .85; flex-wrap: wrap; }
-.pot-stack { position: absolute; right: 18px; bottom: 14px; display: flex; gap: 6px; align-items: flex-end; }
-.pot-stack .col { display: flex; flex-direction: column-reverse; }
-.mini-chip {
-  width: 30px; height: 8px; border-radius: 50%; margin-top: -3px;
-  background: var(--c); box-shadow: 0 1px 0 rgba(0,0,0,.25), inset 0 0 0 2px rgba(255,255,255,.5);
-}
+.pot-meta { display: flex; gap: 8px 16px; font-size: 14px; color: var(--muted); flex-wrap: wrap; justify-content: center; }
 
 .players { display: grid; gap: 10px; margin-top: 16px; }
 .pcard {
@@ -305,7 +350,10 @@ details.card[open] > summary { margin-bottom: 10px; }
 .fx-chip {
   position: absolute; width: 34px; height: 34px; border-radius: 50%;
   background: var(--c);
-  box-shadow: inset 0 0 0 4px var(--c), inset 0 0 0 6px rgba(255,255,255,.9), inset 0 0 0 9px var(--c), 0 4px 8px rgba(0,0,0,.25);
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--c) 62%, #000) 0 53%, color-mix(in srgb, var(--c) 78%, #000) 54% 57%, transparent 58%),
+    repeating-conic-gradient(from -11.25deg, color-mix(in srgb, var(--c) 52%, #fff) 0 22.5deg, var(--c) 0 45deg);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.2), 0 4px 8px rgba(0,0,0,.3);
   will-change: transform, opacity;
 }
 .fx-float {
@@ -348,7 +396,8 @@ details.card[open] > summary { margin-bottom: 10px; }
   .pcard .actions { width: 100%; }
   .pcard .actions .btn { flex: 1; }
   .steps span { padding: 6px 8px; }
-  .pot-stack { opacity: .5; }
+  .side-stack i { height: 4px; width: 20px; }
+  .seat .avatar { width: 36px; height: 36px; font-size: 13px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }

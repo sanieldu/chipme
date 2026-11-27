@@ -5,7 +5,9 @@
 
   const KEY = "chipme:v1";
   const PRESETS = [20, 25, 50];
-  const CHIP_COLORS = ["#3e63dd", "#e5484d", "#18a058", "#1c1d1f", "#8e4ec6", "#e8b33b", "#f76b15", "#12a594"];
+  // clay-chip palette (edge spots + inlay are derived from the base colour in CSS)
+  const CHIP_COLORS = ["#d63a3a", "#1f8fd6", "#1e9b4a", "#f07a2c", "#232325", "#5b3aa6", "#f2c230", "#f1ede3"];
+  const PRESET_COLORS = ["#1f8fd6", "#1e9b4a", "#f07a2c"];   // $20 blue, $25 green, $50 orange
   // blind levels -> the chip values a home game would use for them (cents)
   const BLINDS = [
     { sb: 10, bb: 20, chips: [10, 50, 100, 500] },
@@ -16,10 +18,10 @@
   ];
   const LADDER = [5, 10, 25, 50, 100, 200, 500, 1000, 2500, 10000, 50000];
   const RANK = [
-    { name: "white", color: "#f4f2ec" },
-    { name: "red", color: "#e5484d" },
-    { name: "green", color: "#18a058" },
-    { name: "black", color: "#1c1d1f" },
+    { name: "white", color: "#f1ede3" },
+    { name: "red", color: "#d63a3a" },
+    { name: "green", color: "#1e9b4a" },
+    { name: "black", color: "#232325" },
   ];
   const AV_COLORS = ["#e5484d", "#3e63dd", "#18a058", "#8e4ec6", "#f76b15", "#12a594", "#d6409f", "#978365"];
 
@@ -129,7 +131,7 @@
     const b = chipBreakdown(amount, state.blinds);
     if (!b) return "";
     const rows = b.rows.map((r) => `
-      <li><span class="denom-chip" style="--c:${r.color}">${blindLabel(r.cents)}</span>
+      <li>${chipHTML(r.color, blindLabel(r.cents), compact ? 28 : 34)}
         <span class="grow"><b class="num">${r.n}</b> × ${blindLabel(r.cents)} <span class="muted">${r.name}</span></span>
         ${compact ? "" : `<span class="num muted">${money((r.n * r.cents) / 100)}</span>`}</li>`).join("");
     const bank = players > 1 && !compact
@@ -157,6 +159,53 @@
     return `<span class="avatar" style="--av:${p.color}">${esc(initials(p.name))}</span>`;
   }
 
+  // a clay chip seen from above: edge spots, darker inlay, gold value
+  function chipHTML(color, label = "", size = 40, attrs = "") {
+    const tone = color === "#f1ede3" ? " white" : color === "#f2c230" ? " yellow" : "";
+    return `<span class="chip${tone}" style="--c:${color};--size:${size}px" ${attrs}><span>${label}</span></span>`;
+  }
+  // a chip stack seen from the side
+  function stackHTML(n, color) {
+    return `<span class="side-stack" style="--c:${color}">${"<i></i>".repeat(Math.max(1, n))}</span>`;
+  }
+
+  /* ----- the poker table: one seat per player, spaced evenly around the rail ----- */
+  let seatPos = {};   // pid -> [x%, y%] from the last render, so seats glide when one is added
+  function tableHTML(mode) {
+    const ps = state.players;
+    const n = ps.length;
+    const seats = ps.map((p, i) => {
+      const a = Math.PI / 2 + (i * 2 * Math.PI) / Math.max(n, 1);
+      const x = 50 + 50 * Math.cos(a), y = 50 + 50 * Math.sin(a);
+      const sx = 50 + 32 * Math.cos(a), sy = 50 + 21 * Math.sin(a);   // stack spot on the felt
+      const tin = totalIn(p.id);
+      const stack = mode === "table" && tin > 0 && !p.busted
+        ? `<div class="felt-stack" style="left:${sx}%;top:${sy}%">${stackHTML(Math.min(7, Math.max(2, Math.round((tin / state.buyIn) * 3))), CHIP_COLORS[i % 7])}</div>` : "";
+      return `${stack}<div class="seat ${p.busted ? "out" : ""}" data-seat="${p.id}" data-x="${x}" data-y="${y}" style="left:${x}%;top:${y}%">
+          ${avatar(p)}
+          <span class="seat-tag"><b>${esc(p.name)}</b>${mode === "table" ? `<em class="num">${p.busted ? "busted 💀" : money(tin)}</em>` : ""}</span>
+          ${mode === "setup" ? `<button class="seat-x" data-rm="${p.id}" aria-label="Remove ${esc(p.name)}">×</button>` : ""}
+        </div>`;
+    }).join("");
+    const center = mode === "table"
+      ? `<div class="felt-center" id="pot"><span class="felt-label">Total pot</span><span class="felt-pot num" id="potTotal">${money(potTotal())}</span></div>`
+      : `<div class="felt-center"><span class="felt-logo">♠ chipme ♠</span><span class="felt-label">${n ? `${n} seat${n === 1 ? "" : "s"} taken` : "Add players to take a seat"}</span></div>`;
+    return `<div class="poker ${mode}"><div class="rail"><div class="felt"><div class="felt-line"></div>${center}</div></div><div class="seats">${seats}</div></div>`;
+  }
+  function animateSeats() {
+    const next = {};
+    app.querySelectorAll(".seat").forEach((el) => {
+      const id = el.dataset.seat, x = +el.dataset.x, y = +el.dataset.y;
+      next[id] = [x, y];
+      const prev = seatPos[id];
+      if (reduced) return;
+      if (!prev) el.classList.add("pop");
+      else if (prev[0] !== x || prev[1] !== y)
+        el.animate([{ left: prev[0] + "%", top: prev[1] + "%" }, { left: x + "%", top: y + "%" }], { duration: 550, easing: "cubic-bezier(.2,1,.3,1)" });
+    });
+    seatPos = next;
+  }
+
   /* ----- setup ----- */
   let blindsCustomOpen = false;
   function renderSetup() {
@@ -165,11 +214,18 @@
     const customBlinds = blindsCustomOpen || (bl && !BLINDS.some((b) => b.sb === bl.sb && b.bb === bl.bb));
     app.innerHTML = `
       <h1>Shuffle up &amp; deal.</h1>
-      <p class="sub">Pick the buy-in, add your friends, and chipme keeps the ledger.</p>
+      <p class="sub">Add your friends, pick the stakes, and chipme keeps the ledger.</p>
+
+      ${tableHTML("setup")}
+      <form id="addForm" class="row">
+        <input id="nameIn" class="input grow" placeholder="Friend's name" maxlength="24" autocomplete="off" />
+        <button class="btn primary" type="submit">Take a seat</button>
+      </form>
+      ${state.players.length < 2 ? `<p class="muted hint">Add at least two players to start.</p>` : ""}
 
       <h2>Buy-in</h2>
       <div class="presets" id="presets">
-        ${PRESETS.map((v, i) => `<button class="preset ${state.buyIn === v ? "sel" : ""}" data-v="${v}" style="--c:${CHIP_COLORS[i]}">$${v}</button>`).join("")}
+        ${PRESETS.map((v, i) => `<button class="preset ${state.buyIn === v ? "sel" : ""}" data-v="${v}" aria-label="$${v} buy-in">${chipHTML(PRESET_COLORS[i], v, 70)}</button>`).join("")}
       </div>
       <div class="row" style="margin-top:12px">
         <label class="muted" for="customBuy" style="font-size:14px">Custom</label>
@@ -190,15 +246,6 @@
         </form>` : ""}
       ${breakdownHTML(state.buyIn, state.players.length)}
 
-      <h2>Players <span class="muted" style="text-transform:none;letter-spacing:0">· ${state.players.length}</span></h2>
-      <form id="addForm" class="row">
-        <input id="nameIn" class="input grow" placeholder="Friend's name" maxlength="24" autocomplete="off" />
-        <button class="btn primary" type="submit">Add</button>
-      </form>
-      ${state.players.length
-        ? `<ul class="player-list">${state.players.map((p) => `<li>${avatar(p)}<span class="grow">${esc(p.name)}</span><button class="x" data-rm="${p.id}" aria-label="Remove ${esc(p.name)}">×</button></li>`).join("")}</ul>`
-        : `<div class="empty"><span class="big">🃏</span>Add at least two players to start.</div>`}
-
       <div class="bar"><div class="bar-inner">
         <button class="btn felt block" id="start" ${state.players.length < 2 || !(state.buyIn > 0) ? "disabled" : ""}>
           Deal everyone in · ${money(state.buyIn)} each
@@ -208,7 +255,7 @@
     $("#presets").onclick = (e) => {
       const b = e.target.closest(".preset"); if (!b) return;
       commit((s) => { s.buyIn = +b.dataset.v; });
-      chipBurst(b, CHIP_COLORS[PRESETS.indexOf(+b.dataset.v)], 6);
+      chipBurst(app.querySelector(`.preset[data-v="${b.dataset.v}"]`), PRESET_COLORS[PRESETS.indexOf(+b.dataset.v)], 6);
     };
     $("#customBuy").onchange = (e) => {
       const v = cents(parseFloat(e.target.value));
@@ -240,6 +287,7 @@
       $("#nameIn").focus();
     };
     app.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => commit((s) => { s.players = s.players.filter((p) => p.id !== b.dataset.rm); }));
+    animateSeats();
     $("#start").onclick = () => {
       commit((s) => {
         s.stage = "table";
@@ -259,21 +307,14 @@
     const total = potTotal();
     const active = state.players.filter((p) => !p.busted).length;
     const rebuys = state.log.filter((l) => l.type === "rebuy").length;
-    const stacks = Math.min(5, Math.max(1, Math.ceil(total / (state.buyIn * 2))));
 
     app.innerHTML = `
-      <div class="pot" id="pot" style="margin-top:12px">
-        <div class="pot-label">In the pot</div>
-        <div class="pot-total num" id="potTotal">${money(total)}</div>
-        <div class="pot-meta">
-          <span>🪑 ${active}/${state.players.length} playing</span>
-          <span>🔁 ${rebuys} rebuy${rebuys === 1 ? "" : "s"}</span>
-          <span>💵 ${money(state.buyIn)} buy-in</span>
-          ${state.blinds ? `<span>🎲 ${blindsText(state.blinds)} blinds</span>` : ""}
-        </div>
-        <div class="pot-stack" aria-hidden="true">
-          ${Array.from({ length: stacks }, (_, c) => `<div class="col">${Array.from({ length: 3 + ((c * 7 + total) % 6) }, () => `<span class="mini-chip" style="--c:${CHIP_COLORS[c % CHIP_COLORS.length]}"></span>`).join("")}</div>`).join("")}
-        </div>
+      ${tableHTML("table")}
+      <div class="pot-meta">
+        <span>🪑 ${active}/${state.players.length} playing</span>
+        <span>🔁 ${rebuys} rebuy${rebuys === 1 ? "" : "s"}</span>
+        <span>💵 ${money(state.buyIn)} buy-in</span>
+        ${state.blinds ? `<span>🎲 ${blindsText(state.blinds)} blinds</span>` : ""}
       </div>
 
       <div class="players" id="players">
@@ -321,6 +362,7 @@
     $("#reset").onclick = confirmReset;
     $("#toSettle").onclick = () => commit((s) => { s.stage = "settle"; });
     bindLedger();
+    animateSeats();
   }
 
   function ledgerHTML() {
@@ -709,7 +751,8 @@
       app.querySelectorAll(".pcard").forEach((card, i) => {
         setTimeout(() => {
           card.classList.add("flash-in");
-          chipsToPot(card.querySelector(".avatar"), 4, state.players[i]?.color);
+          const seat = app.querySelector(`.seat[data-seat="${card.dataset.pid}"] .avatar`);
+          chipsToPot(seat || card.querySelector(".avatar"), 4, CHIP_COLORS[i % CHIP_COLORS.length]);
         }, 250 + i * 140);
       });
     });
