@@ -495,3 +495,6 @@ select.input { appearance: none; padding-right: 30px; background-image: linear-g
 .saved-row b { font-weight: 450; text-align: right; }
 .lead-in { font-size: 14px; margin: 0 0 12px; }
 .pill.locked { opacity: 1; cursor: default; background: var(--ink-2); border-color: var(--ink-2); }
+.chip-fields { display: grid; grid-template-columns: 1fr 1.4fr; gap: 12px; margin-top: 4px; }
+.chip-fields .field-lbl { margin-top: 12px; }
+@media (max-width: 560px) { .chip-fields { grid-template-columns: 1fr; } }

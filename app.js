@@ -81,7 +81,7 @@
   const time = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
   /* ---------------- blinds & chip breakdown (cents) ---------------- */
-  const blindLabel = (c) => (c < 100 ? `${c}¢` : `$${c / 100}`);
+  const blindLabel = (c) => (c < 100 ? `${c}¢` : money(c / 100));
   const blindsText = (b) => `${blindLabel(b.sb)}/${blindLabel(b.bb)}`;
 
   // The table's chip set is planned once from the blinds and the main buy-in, so everyone plays
@@ -126,7 +126,8 @@
     const { required, values, tops } = chipOptions(blinds);
     const set = chipSetFor(blinds);
     const top = set[set.length - 1];
-    const shown = values.filter((v) => v <= top);
+    const shown = [...new Set([...values.filter((v) => v <= top), ...set])].sort((a, b) => a - b);
+    const unit = blindLabel(chipOptions(blinds).d0);
     const gaps = set.slice(1).map((v, i) => [set[i], v]).filter(([a, b]) => b / a > 5);
     return `
       <p class="muted lead-in">Which chips does your set have? The ones the blinds need are always in.</p>
@@ -135,13 +136,25 @@
           ? `<button class="pill sel locked" type="button" disabled title="Needed for the blinds">${blindLabel(v)}</button>`
           : `<button class="pill ${set.includes(v) ? "sel" : ""}" type="button" data-d="${v}" aria-pressed="${set.includes(v)}">${blindLabel(v)}</button>`).join("")}
       </div>
-      <div class="row custom-row">
-        <label class="muted" for="topChip">Highest chip</label>
-        <select id="topChip" class="input grow">${tops.map((v) => `<option value="${v}" ${v === top ? "selected" : ""}>${blindLabel(v)}</option>`).join("")}</select>
-      </div>
+      <form class="chip-fields" id="chipFields">
+        <div>
+          <label class="field-lbl" for="topChip">Highest chip</label>
+          <div class="money"><input id="topChip" class="input" type="number" inputmode="decimal" min="0.05" step="0.05" value="${top / 100}" /></div>
+        </div>
+        <div>
+          <label class="field-lbl" for="addChip">Another chip value</label>
+          <div class="row"><div class="money grow"><input id="addChip" class="input" type="number" inputmode="decimal" min="0.05" step="0.05" placeholder="e.g. 3" /></div><button class="btn" type="submit">Add</button></div>
+        </div>
+      </form>
+      <p class="muted hint">Any value works as long as it's a multiple of ${unit}, so the blinds and change still work out.</p>
       ${gaps.length ? `<p class="muted hint">Big jump from ${gaps.map(([a, b]) => `${blindLabel(a)} to ${blindLabel(b)}`).join(" and ")}: making change will take a lot of small chips.</p>` : ""}`;
   }
-  const chipLook = (set) => set.map((c, i) => (i === 0 ? WHITE : LOOK[c] || WHITE));
+  // values outside the usual ones (a $3 or $50 chip) borrow a spare colour
+  const SPARE = [{ name: "brown", color: "#8a5a3c" }, { name: "pink", color: "#d0658e" }, { name: "navy", color: "#2c3e6b" }, { name: "lime", color: "#7fae3a" }, { name: "grey", color: "#8a8e96" }];
+  const chipLook = (set) => {
+    let k = 0;
+    return set.map((c, i) => (i === 0 ? WHITE : LOOK[c] || SPARE[k++ % SPARE.length]));
+  };
 
   function chipBreakdown(amount, blinds) {
     let total = Math.round(amount * 100);
@@ -155,7 +168,8 @@
     }
     const look = chipLook(set);
     const rows = set.map((c, i) => ({ cents: c, n: n[i], ...look[i] })).filter((r) => r.n > 0).reverse();
-    return { rows, total: rows.reduce((a, r) => a + r.n, 0), leftover: leftover / 100, bbs: Math.floor(total / blinds.bb) };
+    const unused = set.filter((c, i) => !n[i] && c > Math.max(...set.filter((_, j) => n[j])));
+    return { rows, unused, total: rows.reduce((a, r) => a + r.n, 0), leftover: leftover / 100, bbs: Math.floor(total / blinds.bb) };
   }
 
   function breakdownHTML(amount, players = 0, compact = false) {
@@ -169,10 +183,11 @@
     const bank = players > 1 && !compact
       ? `<p class="muted bank">For ${players} players you'll need ${b.rows.map((r) => `${r.n * players} ${r.name}`).join(", ")}.</p>` : "";
     const left = b.leftover ? `<p class="muted bank">+ ${money(b.leftover)} that can't be made with chips.</p>` : "";
+    const box = !compact && b.unused.length ? `<p class="muted bank">${b.unused.map(blindLabel).join(" and ")} chips stay in the box: too big to hand out at this buy-in.</p>` : "";
     const short = !compact && b.bbs < 40 ? `<p class="muted bank">Heads up: that's only ${b.bbs} big blinds, a short stack at ${blindsText(state.blinds)}.</p>` : "";
     return `<div class="breakdown ${compact ? "compact" : ""}">
       <div class="bd-head">${compact ? "That's" : "Give each player"} <b class="num">${b.total} chips</b> <span class="muted">· ${b.bbs} big blinds</span></div>
-      <ul>${rows}</ul>${bank}${left}${short}</div>`;
+      <ul>${rows}</ul>${bank}${left}${box}${short}</div>`;
   }
 
   /* ---------------- render ---------------- */
@@ -393,11 +408,31 @@
       const next = set.includes(v) ? set.filter((x) => x !== v) : [...set, v].sort((a, c) => a - c);
       commit((s) => { s.chips = { key: `${bl.sb}/${bl.bb}`, set: next }; });
     };
+    // a typed chip value must be a multiple of the smallest chip, so blinds and change still work
+    const chipValue = (input, min) => {
+      const { d0 } = chipOptions(bl);
+      const v = Math.round(parseFloat(input.value) * 100);
+      if (!(v > 0)) { input.focus(); return null; }
+      if (v % d0) { toast(`Chip values need to be multiples of ${blindLabel(d0)}`); input.focus(); return null; }
+      if (min && v < min) { toast(`The highest chip can't be below ${blindLabel(min)}: the blinds need it`); input.value = min / 100; return null; }
+      return v;
+    };
+    const saveSet = (next) => commit((s) => { s.chips = { key: `${bl.sb}/${bl.bb}`, set: [...new Set(next)].sort((a, c) => a - c) }; });
     const tc = $("#topChip");
     if (tc) tc.onchange = () => {
-      const top = +tc.value, { required } = chipOptions(bl);
-      const next = [...new Set([...chipSetFor(bl).filter((x) => x < top), top, ...required])].sort((a, c) => a - c);
-      commit((s) => { s.chips = { key: `${bl.sb}/${bl.bb}`, set: next }; });
+      const { required } = chipOptions(bl);
+      const top = chipValue(tc, required[required.length - 1]);
+      if (top) saveSet([...chipSetFor(bl).filter((x) => x < top), top, ...required]);
+    };
+    const cf = $("#chipFields");
+    if (cf) cf.onsubmit = (e) => {
+      e.preventDefault();
+      const add = $("#addChip"), v = chipValue(add);
+      if (!v) return;
+      const set = chipSetFor(bl);
+      if (set.includes(v)) return toast(`${blindLabel(v)} is already in`);
+      saveSet([...set, v]);
+      toast(v > set[set.length - 1] ? `Added ${blindLabel(v)} as the highest chip` : `Added ${blindLabel(v)}`);
     };
     const cb = $("#customBlinds");
     if (cb) cb.onsubmit = (e) => {

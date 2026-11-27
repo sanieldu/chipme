@@ -4,7 +4,7 @@ A minimal poker buy-in counter and settle-up ledger. No build step, no backend: 
 
 ## Features
 - Pick a buy-in ($20, $25, $50 or a custom amount) and seat your friends at a drawn table, one seat each
-- Pick the blinds (10¢/20¢ up to $2/$5, or custom), then the chips your set has: the ones the blinds need are always in, and you choose the rest (such as $2 and $5) and the highest chip
+- Pick the blinds (10¢/20¢ up to $2/$5, or custom), then the chips your set has: the ones the blinds need are always in, and you choose the rest (such as $2 and $5), type in the highest chip and add any other value your set has (a $3 or $50 chip)
 - Get the chips to hand each player, counted by the optimiser in `chips.js` (below), plus the totals for the table and a warning for short stacks
 - During the game, the money in play (everything bought in, less early cash-outs) sits above the table; the table shows each seat's buy-ins and its chips as overlapping stacks
 - Rebuy for the same, more or less than the buy-in; bust players out and buy them back in
