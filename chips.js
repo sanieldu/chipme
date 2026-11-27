@@ -65,13 +65,12 @@
     // enough of each value to break the next one up (two of them for the smallest chip)
     const n = set.map(() => 1);
     for (let i = 0; i < k - 1; i++) n[i] = Math.max(n[i], Math.ceil(((i === 0 ? 2 : 1) * set[i + 1]) / set[i]));
-    // blind chips: the smallest chip posts the small blind every orbit, so home-game guides give
-    // each player 8-20 of them, about 10-15% of the stack. Aim for 10% with at least 10 and at
-    // most 20, never more than a quarter of the stack.
-    const blindChips = Math.min(20, Math.max(10, Math.ceil((0.1 * T) / set[0])));
-    n[0] = Math.max(n[0], Math.min(blindChips, Math.floor((0.25 * T) / set[0])));
-    // chips at or under the big blind cover about 10 big blinds (a quarter of a short stack)
-    const L = Math.min(10 * bb, Math.ceil((T * 0.25) / set[0]) * set[0]);
+    // blind chips: home-game guides put about 10-15% of a stack in the chips used to post blinds.
+    // Every player gets at least 10 of the smallest chip, and all the chips at or under the big
+    // blind together hold about 10% of the stack (at least 10 big blinds, at most 20 or a quarter), so a
+    // 25c/50c game can split it as 10 x 25c + 5 x 50c instead of 20 x 25c.
+    n[0] = Math.max(n[0], Math.min(10, Math.floor((0.25 * T) / set[0])));
+    const L = Math.min(Math.max(10 * bb, Math.ceil((0.1 * T) / set[0]) * set[0]), 20 * bb, Math.floor((0.25 * T) / set[0]) * set[0]);
     const low = set.map((d, i) => i).filter((i) => set[i] <= bb);
     if (!low.length) return null;
     let lowVal = low.reduce((a, i) => a + n[i] * set[i], 0);
