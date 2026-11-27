@@ -4,6 +4,10 @@
   "use strict";
 
   const KEY = "chipme:v1";
+  // finished games live under their own key, so starting a new game never touches them
+  const HKEY = "chipme:history";
+  const loadHistory = () => { try { const h = JSON.parse(localStorage.getItem(HKEY)); return Array.isArray(h) ? h : []; } catch (_) { return []; } };
+  const saveHistory = (h) => { try { localStorage.setItem(HKEY, JSON.stringify(h)); return true; } catch (_) { return false; } };
   const PRESETS = [20, 25, 50];
   // clay-chip palette (edge spots + inlay are derived from the base colour in CSS)
   const CHIP_COLORS = ["#d63a3a", "#1f8fd6", "#1e9b4a", "#f07a2c", "#232325", "#5b3aa6", "#f2c230", "#f1ede3"];
@@ -37,6 +41,7 @@
     blinds: null,            // {sb, bb} in cents; asked before showing chip counts
     settleAnyway: false,
     startedAt: null,
+    savedId: null,           // the past-games record this game was saved as
   });
 
   let state = load();
@@ -300,15 +305,37 @@
     seatPos = next;
   }
 
-  /* ----- home: the saved game waits here untouched ----- */
+  /* ----- home: the game in progress waits here untouched, with past games under it ----- */
+  const fmtDate = (ts) => new Date(ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  function pastGamesHTML() {
+    const hist = loadHistory().sort((a, b) => b.date - a.date);
+    if (!hist.length) return `<div class="card empty">No saved games yet. Save one from the cash-out screen when a game ends.</div>`;
+    return `<div class="history">${hist.map((g) => `
+      <details class="card game">
+        <summary>
+          <span class="g-head"><b>${fmtDate(g.date)}</b><span class="muted mono">${g.blinds ? blindsText(g.blinds) : "No blinds set"} · ${g.players.length} players · ${money(g.total)} in</span></span>
+          <span class="g-res mono"><span><span class="pos">▲</span> ${esc(g.winner.name)} <span class="pos">${money(g.winner.net, true)}</span></span><span><span class="neg">▼</span> ${esc(g.loser.name)} <span class="neg">${money(g.loser.net, true)}</span></span></span>
+        </summary>
+        <table class="g-table">
+          <thead><tr><th>Player</th><th>Bought in</th><th>Left with</th><th>Result</th></tr></thead>
+          <tbody>${[...g.players].sort((a, b) => b.net - a.net).map((p) => `<tr>
+            <td>${esc(p.name)}${p.buyins > 1 ? ` <span class="muted mono">×${p.buyins}</span>` : ""}</td>
+            <td class="mono">${money(p.in)}</td><td class="mono">${money(p.out)}</td>
+            <td class="mono ${p.net > 0 ? "pos" : p.net < 0 ? "neg" : "muted"}">${money(p.net, true)}</td></tr>`).join("")}</tbody>
+        </table>
+        ${g.transfers && g.transfers.length ? `<p class="muted g-pay">${g.transfers.map((t) => `${esc(t.from)} → ${esc(t.to)} ${money(t.amt)}`).join(" · ")}</p>` : ""}
+        <div class="row"><span class="grow"></span><button class="btn small ghost danger" data-delgame="${g.id}">Delete</button></div>
+      </details>`).join("")}</div>`;
+  }
   function renderHome() {
     const where = { setup: "Seating players", table: "Playing", settle: "Counting chips" }[state.stage];
     const n = state.players.length;
     const started = state.startedAt ? time(state.startedAt) : null;
+    const hist = loadHistory();
     app.innerHTML = `
       ${heading("chipme")}
       <p class="sub">Buy-ins, rebuys and the settle-up for a home poker game.</p>
-      ${sec("Saved game", `
+      ${gameOn() ? sec("Game in progress", `
         <div class="card saved">
           <div class="saved-row"><span class="muted">Status</span><b>${where}</b></div>
           <div class="saved-row"><span class="muted">Players</span><b>${n ? state.players.map((p) => esc(p.name)).join(", ") : "None yet"}</b></div>
@@ -318,9 +345,19 @@
         <div class="row wrap" style="margin-top:14px">
           <button class="btn primary" id="resume">Resume game <kbd>↵</kbd></button>
           <button class="btn" id="fresh">Start a new game</button>
-        </div>`, 2)}`;
+        </div>`, 2) : sec("Game in progress", `
+        <p class="muted lead-in">Nothing on the table right now.</p>
+        <button class="btn primary" id="resume">Set up a game</button>`, 2)}
+      ${sec(`Past games <span class="muted mono">${String(hist.length).padStart(2, "0")}</span>`, pastGamesHTML(), 3)}`;
     $("#resume").onclick = leaveHome;
-    $("#fresh").onclick = confirmReset;
+    const f = $("#fresh"); if (f) f.onclick = confirmReset;
+    app.querySelectorAll("[data-delgame]").forEach((b) => b.onclick = () => {
+      const all = loadHistory(), gone = all.find((g) => g.id === b.dataset.delgame);
+      saveHistory(all.filter((g) => g.id !== gone.id));
+      if (state.savedId === gone.id) commit((s) => { s.savedId = null; });
+      render();
+      toast(`Deleted the game from ${fmtDate(gone.date)}`, () => { saveHistory([...loadHistory(), gone]); render(); });
+    });
     $("#resume").focus({ preventScroll: true });
   }
   function screenSwap(fn) {
@@ -329,7 +366,7 @@
   }
   function leaveHome() { screenSwap(() => { home = false; render(); }); }
   function openHome() {
-    if (!gameOn()) { scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" }); return; }
+    if (!gameOn() && !loadHistory().length) { scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" }); return; }
     if (home) return;
     screenSwap(() => { home = true; render(); });
   }
@@ -703,6 +740,11 @@
             }).join("")}</ul>
           </div>`, 5)}` : ""}
 
+      ${sec("Save", canSettle
+        ? `<p class="muted lead-in">Keeps the date, blinds, players, buy-ins and results on this device, under Past games on the home screen.</p>
+           <button class="btn ${state.savedId ? "" : "primary"}" id="saveGame">${state.savedId ? "Saved · save changes" : "Save game"}</button>`
+        : `<p class="muted lead-in">Enter every stack and the game can be saved.</p>`, 6)}
+
       <div class="bar"><div class="bar-inner">
         <button class="btn" id="back">Back to table</button>
         <button class="btn primary grow" id="newGame">New game</button>
@@ -722,8 +764,32 @@
     });
     const any = $("#anyway"); if (any) any.onchange = () => commit((s) => { s.settleAnyway = any.checked; });
     const cp = $("#copy"); if (cp) cp.onclick = () => copySummary(transfers, ranked);
+    const sg = $("#saveGame"); if (sg) sg.onclick = () => saveGame(rows, transfers, tin);
     $("#back").onclick = () => go((s) => { s.stage = "table"; });
     $("#newGame").onclick = confirmReset;
+  }
+
+  // one finished game, as kept under Past games
+  function saveGame(rows, transfers, tin) {
+    const ranked = [...rows].sort((a, b) => b.net - a.net);
+    const pick = (r) => ({ name: r.p.name, net: r.net });
+    const rec = {
+      id: state.savedId || uid(),
+      date: state.startedAt || Date.now(),
+      savedAt: Date.now(),
+      blinds: state.blinds,
+      buyIn: state.buyIn,
+      total: tin,
+      players: rows.map((r) => ({ name: r.p.name, color: r.p.color, in: r.in, buyins: entries(r.p.id), out: cents((r.final || 0) + r.cashed), net: r.net })),
+      winner: pick(ranked[0]),
+      loser: pick(ranked[ranked.length - 1]),
+      transfers: transfers.map((t) => ({ from: t.from.name, to: t.to.name, amt: t.amt })),
+    };
+    const hist = loadHistory().filter((g) => g.id !== rec.id);
+    hist.push(rec);
+    if (!saveHistory(hist)) return toast("Couldn't save: this browser is blocking storage");
+    const again = !!state.savedId;
+    commit((s) => { s.savedId = rec.id; }, { msg: again ? "Saved game updated" : "Game saved to Past games" });
   }
 
   function copySummary(transfers, ranked) {
@@ -926,6 +992,7 @@
 
   /* ---------------- toast ---------------- */
   let toastTimer;
+  // undo: true rolls the game back to before the last change; a function undoes something else
   function toast(msg, undo = false) {
     const t = $("#toast");
     t.innerHTML = `<span>${esc(msg)}</span>${undo ? `<button id="undo">Undo</button>` : ""}`;
@@ -933,7 +1000,8 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => t.classList.remove("show"), undo ? 5000 : 2200);
     const u = $("#undo");
-    if (u) u.onclick = () => {
+    if (u && typeof undo === "function") u.onclick = () => { undo(); t.classList.remove("show"); };
+    else if (u) u.onclick = () => {
       if (!undoSnap) return;
       state = JSON.parse(undoSnap); undoSnap = null;
       save(); render();

@@ -498,3 +498,20 @@ select.input { appearance: none; padding-right: 30px; background-image: linear-g
 .chip-fields { display: grid; grid-template-columns: 1fr 1.4fr; gap: 12px; margin-top: 4px; }
 .chip-fields .field-lbl { margin-top: 12px; }
 @media (max-width: 560px) { .chip-fields { grid-template-columns: 1fr; } }
+
+/* past games */
+.history { display: grid; gap: 1px; background: var(--line); border-radius: var(--radius); overflow: hidden; }
+.history .card.game { border-radius: 0; padding: 14px 16px; }
+details.card.game > summary { align-items: center; gap: 12px; flex-wrap: nowrap; }
+details.card.game > summary::after { margin-left: 4px; }
+.g-head { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; font-size: 14px; }
+.g-head b { font-weight: 450; font-size: 15px; }
+.g-head .muted { font-size: 12px; }
+.g-res { display: flex; flex-direction: column; gap: 2px; font-size: 13px; text-align: right; white-space: nowrap; flex: none; }
+.g-table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 12px; }
+.g-table th { text-align: left; font-weight: 400; font-size: 12px; color: var(--muted); padding: 6px 0; border-bottom: 1px solid var(--line); font-variation-settings: "MONO" 1; }
+.g-table td { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.g-table th:not(:first-child), .g-table td:not(:first-child) { text-align: right; }
+.g-table tr:last-child td { border-bottom: 0; }
+.g-pay { font-size: 13px; margin: 10px 0 0; }
+details.card.game[open] { animation: none; }

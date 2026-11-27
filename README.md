@@ -14,6 +14,7 @@ A minimal poker buy-in counter and settle-up ledger. No build step, no backend: 
 - Ledger of every action, with undo and per-entry delete
 - Cash-out page: enter final stacks, see whether the chips balance (or by how much they're off), and get the fewest e-transfers needed to settle up
 - Leaderboard with top winner and biggest loser
+- Save a finished game: the date, blinds, players, what each bought in for and left with, the biggest winner and loser and who paid whom go under Past games on the home screen (kept on this device; open one for the details, delete with undo)
 - Keyboard shortcuts: N seats or adds a player, D deals, C counts the chips
 - Everything autosaves to `localStorage`, so refreshing or closing the tab doesn't lose the game
 
