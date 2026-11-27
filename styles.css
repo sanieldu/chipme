@@ -535,3 +535,32 @@ details.card.game[open] { animation: none; }
 }
 @keyframes wash { to { transform: translateX(100%); } }
 .balance.calm .icon { animation: pop 1s var(--ease-enter); }
+
+/* setup: four screens, one question each, with a thin row of steps on top */
+.crumbs { display: flex; align-items: center; gap: 10px; margin: 18px 0 4px; }
+.crumb {
+  display: inline-flex; align-items: baseline; gap: 6px; padding: 8px 0; min-height: 36px;
+  background: none; border: 0; color: var(--muted); font-size: 13px; white-space: nowrap;
+  font-variation-settings: "MONO" 1; transition: color .25s var(--ease);
+}
+.crumb i { font-style: normal; opacity: .55; }
+.crumb b { color: var(--ink-2); font-weight: 450; }
+.crumb.on { color: var(--ink); }
+.crumb.on i { opacity: 1; }
+.crumb:not(:disabled):not(.on):hover { color: var(--ink); }
+.crumb:disabled { opacity: .4; cursor: default; }
+.crumb-line { flex: 1; min-width: 10px; height: 1px; background: var(--line); }
+.presets.big { gap: 18px; margin-top: 30px; }
+.presets.big .chip { font-size: 30px; }
+.pills.big { gap: 10px; margin-top: 30px; }
+.pills.big .pill { height: 50px; padding: 0 22px; font-size: 16px; }
+.chip-fields { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-top: 18px; }
+.inline-field { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; }
+.inline-field .money { width: 132px; display: block; }
+.bank.warn { color: var(--red); }
+@media (max-width: 560px) {
+  .crumbs { gap: 6px; }
+  .crumb:not(.on) .lbl { display: none; }
+  .presets.big { gap: 12px; }
+  .presets.big .chip { --size: 70px !important; font-size: 25px; }
+}

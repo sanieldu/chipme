@@ -44,6 +44,7 @@
     startedAt: null,
     savedId: null,           // the past-games record this game was saved as
     buyInPicked: false,      // setup asks one thing at a time: players, buy-in, blinds, chips
+    setupStep: "players",    // the setup screen showing: players | buyin | blinds | chips
   });
 
   let state = load();
@@ -133,30 +134,24 @@
     return { set, n: countsIn(set, t, blinds.bb) };
   }
   function chipsHTML(blinds) {
-    const { required, values, tops } = chipOptions(blinds);
+    const { required, values } = chipOptions(blinds);
     const set = chipSetFor(blinds);
     const top = set[set.length - 1];
     const shown = [...new Set([...values.filter((v) => v <= top), ...set])].sort((a, b) => a - b);
-    const unit = blindLabel(chipOptions(blinds).d0);
     const gaps = set.slice(1).map((v, i) => [set[i], v]).filter(([a, b]) => b / a > 5);
     return `
-      <p class="muted lead-in">Which chips does your set have? The ones the blinds need are always in.</p>
       <div class="pills" id="denoms">
         ${shown.map((v) => required.includes(v)
           ? `<button class="pill sel locked" type="button" disabled title="Needed for the blinds">${blindLabel(v)}</button>`
           : `<button class="pill ${set.includes(v) ? "sel" : ""}" type="button" data-d="${v}" aria-pressed="${set.includes(v)}">${blindLabel(v)}</button>`).join("")}
       </div>
       <form class="chip-fields" id="chipFields">
-        <div>
-          <label class="field-lbl" for="topChip">Highest chip</label>
-          <div class="money"><input id="topChip" class="input" type="number" inputmode="decimal" min="0.05" step="0.05" value="${top / 100}" /></div>
-        </div>
-        <div>
-          <label class="field-lbl" for="addChip">Another chip value</label>
-          <div class="row"><div class="money grow"><input id="addChip" class="input" type="number" inputmode="decimal" min="0.05" step="0.05" placeholder="e.g. 3" /></div><button class="btn" type="submit">Add</button></div>
-        </div>
+        <label class="inline-field"><span class="muted">Highest chip</span>
+          <span class="money"><input id="topChip" class="input" type="number" inputmode="decimal" min="0.05" step="0.05" value="${top / 100}" /></span></label>
+        ${otherChipOpen
+          ? `<span class="inline-field unfold-in"><span class="money"><input id="addChip" class="input" type="number" inputmode="decimal" min="0.05" step="0.05" placeholder="Other value" aria-label="Another chip value" /></span><button class="btn" type="submit">Add</button></span>`
+          : `<button class="btn small ghost" type="button" id="otherChip">+ Other value</button>`}
       </form>
-      <p class="muted hint">Any value works as long as it's a multiple of ${unit}, so the blinds and change still work out.</p>
       ${gaps.length ? `<p class="muted hint">Big jump from ${gaps.map(([a, b]) => `${blindLabel(a)} to ${blindLabel(b)}`).join(" and ")}: making change will take a lot of small chips.</p>` : ""}`;
   }
   // values outside the usual ones (a $3 or $50 chip) borrow a spare colour
@@ -193,11 +188,12 @@
     const bank = players > 1 && !compact
       ? `<p class="muted bank">For ${players} players you'll need ${b.rows.map((r) => `${r.n * players} ${r.name}`).join(", ")}.</p>` : "";
     const left = b.leftover ? `<p class="muted bank">+ ${money(b.leftover)} that can't be made with chips.</p>` : "";
+    const lots = !compact && b.total > 60 ? `<p class="bank warn">That's ${b.total} chips each: too many to play with. Add a bigger chip value.</p>` : "";
     const box = !compact && b.unused.length ? `<p class="muted bank">${b.unused.map(blindLabel).join(" and ")} chips stay in the box: too big to hand out at this buy-in.</p>` : "";
     const short = !compact && b.bbs < 40 ? `<p class="muted bank">Heads up: that's only ${b.bbs} big blinds, a short stack at ${blindsText(state.blinds)}.</p>` : "";
     return `<div class="breakdown ${compact ? "compact" : ""}">
       <div class="bd-head">${compact ? "That's" : "Give each player"} <b class="num">${b.total} chips</b> <span class="muted">· ${b.bbs} big blinds</span></div>
-      <ul>${rows}</ul>${bank}${left}${box}${short}</div>`;
+      <ul>${rows}</ul>${lots}${bank}${left}${box}${short}</div>`;
   }
 
   /* ---------------- render ---------------- */
@@ -206,7 +202,7 @@
   let home = false;   // the home screen sits over a saved game without touching it
   const gameOn = () => state.stage !== "setup" || state.log.length > 0;
   function render() {
-    const screen = home ? "home" : state.stage;
+    const screen = home ? "home" : state.stage === "setup" ? `setup:${setupStep()}` : state.stage;
     const fresh = shownStage !== screen;
     shownStage = screen;
     app.classList.toggle("enter", fresh && !reduced);
@@ -378,83 +374,113 @@
 
   /* ----- setup ----- */
   let blindsCustomOpen = false;
-  // Setup asks one question at a time. A step that appears for the first time unfolds from under
-  // the one before it; steps already answered just stand (also after a refresh).
-  let shownSteps = new Set();
-  let customBuyOpen = false;
+  // Setup is four short screens, one question each: who's playing, the buy-in, the blinds, the
+  // chips. A thin row at the top shows the answers so far and steps back to any of them.
+  const SETUP = [["players", "Players"], ["buyin", "Buy-in"], ["blinds", "Blinds"], ["chips", "Chips"]];
+  let customBuyOpen = false, otherChipOpen = false;
+  function canReach(k) {
+    const two = state.players.length >= 2;
+    return k === "players" || (k === "buyin" && two) || (k === "blinds" && two && state.buyInPicked) || (k === "chips" && two && state.buyInPicked && !!state.blinds);
+  }
+  const setupStep = () => (canReach(state.setupStep) ? state.setupStep : "players");
+  function toStep(k) {
+    if (!canReach(k)) return;
+    screenSwap(() => { state.setupStep = k; save(); render(); });
+  }
+  function crumbsHTML(step) {
+    const answer = {
+      players: state.players.length ? String(state.players.length) : "",
+      buyin: state.buyInPicked ? money(state.buyIn) : "",
+      blinds: state.blinds ? blindsText(state.blinds) : "",
+      chips: "",
+    };
+    return `<nav class="crumbs reveal" style="--d:0" aria-label="Setup steps">${SETUP.map(([k, label], i) => `
+      <button class="crumb ${k === step ? "on" : ""}" data-step="${k}" ${canReach(k) ? "" : "disabled"} ${k === step ? 'aria-current="step"' : ""}>
+        <i>${String(i + 1).padStart(2, "0")}</i><span class="lbl">${label}</span>${answer[k] ? `<b>${answer[k]}</b>` : ""}
+      </button>`).join('<span class="crumb-line" aria-hidden="true"></span>')}</nav>`;
+  }
+
   function renderSetup(fresh) {
-    const custom = state.buyInPicked && !PRESETS.includes(state.buyIn);
+    const step = setupStep();
     const bl = state.blinds;
-    const customBlinds = blindsCustomOpen || (bl && !BLINDS.some((b) => b.sb === bl.sb && b.bb === bl.bb));
     const n = state.players.length;
-    const steps = { buyin: n >= 2 || state.buyInPicked, blinds: state.buyInPicked, chips: state.buyInPicked && !!bl };
-    const ready = n >= 2 && state.buyInPicked && !!bl;
-    if (fresh) shownSteps = new Set(Object.keys(steps).filter((k) => steps[k]).concat(ready ? ["deal"] : []));
-    const unfold = (k) => { const first = !shownSteps.has(k); shownSteps.add(k); return first ? " unfold" : ""; };
-    const step = (k, label, body, d) => steps[k] ? sec(label, body, d).replace('class="sec reveal"', `class="sec reveal${unfold(k)}" data-step="${k}"`) : "";
+    const custom = state.buyInPicked && !PRESETS.includes(state.buyIn);
+    const customBlinds = blindsCustomOpen || (bl && !BLINDS.some((b) => b.sb === bl.sb && b.bb === bl.bb));
     const showCustom = customBuyOpen || custom;
-    app.innerHTML = `
-      ${heading("Shuffle up", "and deal.")}
-      <p class="sub">Seat your friends, pick the stakes, and chipme keeps the ledger.</p>
+    let body = "", bar = "";
 
-      <div class="reveal" style="--d:1">${tableHTML("setup", fresh)}</div>
-
-      ${sec(`Players <span class="muted mono">${String(n).padStart(2, "0")}</span>`, `
-        <form id="addForm" class="row">
+    if (step === "players") {
+      body = `
+        ${heading("Who's", "playing?")}
+        <p class="sub">Seat everyone at the table. Two or more to start.</p>
+        <div class="reveal" style="--d:1">${tableHTML("setup", fresh)}</div>
+        <form id="addForm" class="row reveal" style="--d:2">
           <input id="nameIn" class="input grow" placeholder="Friend's name" maxlength="24" autocomplete="off" aria-label="Friend's name" />
           <button class="btn primary" type="submit">Take a seat <kbd>↵</kbd></button>
-        </form>
-        ${n < 2 ? `<p class="muted hint">Seat at least two players and the buy-in comes next. Press <kbd class="mono">N</kbd> to jump here.</p>` : ""}`, 2)}
-
-      ${step("buyin", "Buy-in", `
-        <div class="presets" id="presets">
-          ${PRESETS.map((v, i) => `<button class="preset ${state.buyInPicked && state.buyIn === v ? "sel" : ""}" data-v="${v}" aria-label="$${v} buy-in">${chipHTML(PRESET_COLORS[i], v, 64)}</button>`).join("")}
-          <button class="preset ${showCustom ? "sel" : ""}" data-v="custom" aria-label="Custom buy-in" aria-expanded="${showCustom}">${chipHTML(CUSTOM_COLOR, "C", 64)}</button>
+        </form>`;
+      bar = `<button class="btn felt block" id="next" ${n < 2 ? "disabled" : ""}>${n < 2 ? `Seat ${2 - n} more to continue` : "Next: the buy-in"}</button>`;
+    } else if (step === "buyin") {
+      body = `
+        ${heading("What's the", "buy-in?")}
+        <p class="sub">What each player puts in to start. Tap a chip.</p>
+        <div class="presets big reveal" style="--d:1" id="presets">
+          ${PRESETS.map((v, i) => `<button class="preset ${state.buyInPicked && state.buyIn === v ? "sel" : ""}" data-v="${v}" aria-label="$${v} buy-in">${chipHTML(PRESET_COLORS[i], v, 84)}</button>`).join("")}
+          <button class="preset ${showCustom ? "sel" : ""}" data-v="custom" aria-label="Custom buy-in" aria-expanded="${showCustom}">${chipHTML(CUSTOM_COLOR, "C", 84)}</button>
         </div>
         ${showCustom ? `
-          <form class="row custom-row${custom ? "" : " unfold-in"}" id="customForm">
-            <label class="muted" for="customBuy">Custom buy-in</label>
-            <div class="money grow"><input id="customBuy" class="input" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="Any amount" value="${custom ? state.buyIn : ""}" /></div>
-            <button class="btn" type="submit">Set</button>
-          </form>` : ""}`, 3)}
-
-      ${step("blinds", "Blinds", `
-        <div class="pills" id="blinds">
+          <form class="row custom-row unfold-in" id="customForm">
+            <div class="money grow"><input id="customBuy" class="input" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="Any amount" aria-label="Custom buy-in" value="${custom ? state.buyIn : ""}" /></div>
+            <button class="btn primary" type="submit">Set buy-in</button>
+          </form>` : ""}`;
+    } else if (step === "blinds") {
+      body = `
+        ${heading("What are", "the blinds?")}
+        <p class="sub">Small blind and big blind.</p>
+        <div class="pills big reveal" style="--d:1" id="blinds">
           ${BLINDS.map((b, i) => `<button class="pill ${bl && !customBlinds && bl.sb === b.sb && bl.bb === b.bb ? "sel" : ""}" data-b="${i}">${blindsText(b)}</button>`).join("")}
           <button class="pill ${customBlinds ? "sel" : ""}" data-b="custom">Custom</button>
         </div>
         ${customBlinds ? `
-          <form class="row" id="customBlinds" style="margin-top:12px">
+          <form class="row unfold-in" id="customBlinds" style="margin-top:14px">
             <div class="money grow"><input id="sbIn" class="input" type="number" inputmode="decimal" min="0.05" step="0.05" placeholder="Small" aria-label="Small blind" value="${bl ? bl.sb / 100 : ""}" /></div>
             <span class="muted">/</span>
             <div class="money grow"><input id="bbIn" class="input" type="number" inputmode="decimal" min="0.05" step="0.05" placeholder="Big" aria-label="Big blind" value="${bl ? bl.bb / 100 : ""}" /></div>
-            <button class="btn" type="submit">Set</button>
-          </form>` : ""}`, 4)}
+            <button class="btn primary" type="submit">Set</button>
+          </form>` : ""}`;
+    } else {
+      body = `
+        ${heading("Which chips", "do you have?")}
+        <p class="sub">The blind chips are always in. Turn the rest on or off.</p>
+        <div class="reveal" style="--d:1">${chipsHTML(bl)}</div>
+        <div class="reveal" style="--d:2">${breakdownHTML(state.buyIn, n)}</div>`;
+      bar = `<button class="btn felt block" id="start">Deal everyone in · ${money(state.buyIn)} each <kbd>D</kbd></button>`;
+    }
 
-      ${step("chips", "Chips", bl ? `${chipsHTML(bl)}${breakdownHTML(state.buyIn, n)}` : "", 5)}
+    app.innerHTML = `${crumbsHTML(step)}${body}${bar ? `<div class="bar"><div class="bar-inner">${bar}</div></div>` : ""}`;
 
-      ${ready ? `<div class="bar${unfold("deal") ? " rise" : ""}"><div class="bar-inner">
-        <button class="btn felt block" id="start">
-          Deal everyone in · ${money(state.buyIn)} each <kbd>D</kbd>
-        </button>
-      </div></div>` : ""}`;
+    app.querySelectorAll(".crumb").forEach((c) => c.onclick = () => { if (c.dataset.step !== step) toStep(c.dataset.step); });
+    const nx = $("#next"); if (nx) nx.onclick = () => toStep("buyin");
 
-    // bring a step that just appeared into view, gently
-    const born = app.querySelector(".sec.unfold");
-    if (born && !fresh) setTimeout(() => born.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "nearest" }), 160);
+    const af = $("#addForm");
+    if (af) af.onsubmit = (e) => {
+      e.preventDefault();
+      const name = $("#nameIn").value.trim();
+      if (!name) { if (state.players.length >= 2) toStep("buyin"); return; }
+      if (state.players.some((p) => p.name.toLowerCase() === name.toLowerCase())) return toast(`${name} is already at the table`);
+      commit((s) => s.players.push(newPlayer(name)));
+      $("#nameIn").focus();
+    };
+    app.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => commit((s) => { s.players = s.players.filter((p) => p.id !== b.dataset.rm); }));
+    animateSeats();
 
     const pr = $("#presets");
     if (pr) pr.onclick = (e) => {
       const b = e.target.closest(".preset"); if (!b) return;
-      if (b.dataset.v === "custom") {
-        customBuyOpen = true;
-        render();
-        $("#customBuy")?.focus();
-        return;
-      }
+      if (b.dataset.v === "custom") { customBuyOpen = true; render(); $("#customBuy")?.focus(); return; }
       customBuyOpen = false;
       commit((s) => { s.buyIn = +b.dataset.v; s.buyInPicked = true; });
       chipBurst(app.querySelector(`.preset[data-v="${b.dataset.v}"]`), PRESET_COLORS[PRESETS.indexOf(+b.dataset.v)], 6);
+      setTimeout(() => toStep("blinds"), reduced ? 0 : 520);
     };
     const cfm = $("#customForm");
     if (cfm) cfm.onsubmit = (e) => {
@@ -463,7 +489,9 @@
       if (!(v > 0)) return inp.focus();
       customBuyOpen = false;
       commit((s) => { s.buyIn = v; s.buyInPicked = true; });
+      toStep("blinds");
     };
+
     const blp = $("#blinds");
     if (blp) blp.onclick = (e) => {
       const b = e.target.closest(".pill"); if (!b) return;
@@ -471,39 +499,7 @@
       blindsCustomOpen = false;
       const { sb, bb } = BLINDS[+b.dataset.b];
       commit((s) => { s.blinds = { sb, bb }; });
-    };
-    const dn = $("#denoms");
-    if (dn) dn.onclick = (e) => {
-      const b = e.target.closest("[data-d]"); if (!b) return;
-      const v = +b.dataset.d, set = chipSetFor(bl);
-      const next = set.includes(v) ? set.filter((x) => x !== v) : [...set, v].sort((a, c) => a - c);
-      commit((s) => { s.chips = { key: `${bl.sb}/${bl.bb}`, set: next }; });
-    };
-    // a typed chip value must be a multiple of the smallest chip, so blinds and change still work
-    const chipValue = (input, min) => {
-      const { d0 } = chipOptions(bl);
-      const v = Math.round(parseFloat(input.value) * 100);
-      if (!(v > 0)) { input.focus(); return null; }
-      if (v % d0) { toast(`Chip values need to be multiples of ${blindLabel(d0)}`); input.focus(); return null; }
-      if (min && v < min) { toast(`The highest chip can't be below ${blindLabel(min)}: the blinds need it`); input.value = min / 100; return null; }
-      return v;
-    };
-    const saveSet = (next) => commit((s) => { s.chips = { key: `${bl.sb}/${bl.bb}`, set: [...new Set(next)].sort((a, c) => a - c) }; });
-    const tc = $("#topChip");
-    if (tc) tc.onchange = () => {
-      const { required } = chipOptions(bl);
-      const top = chipValue(tc, required[required.length - 1]);
-      if (top) saveSet([...chipSetFor(bl).filter((x) => x < top), top, ...required]);
-    };
-    const cf = $("#chipFields");
-    if (cf) cf.onsubmit = (e) => {
-      e.preventDefault();
-      const add = $("#addChip"), v = chipValue(add);
-      if (!v) return;
-      const set = chipSetFor(bl);
-      if (set.includes(v)) return toast(`${blindLabel(v)} is already in`);
-      saveSet([...set, v]);
-      toast(v > set[set.length - 1] ? `Added ${blindLabel(v)} as the highest chip` : `Added ${blindLabel(v)}`);
+      setTimeout(() => toStep("chips"), reduced ? 0 : 360);
     };
     const cb = $("#customBlinds");
     if (cb) cb.onsubmit = (e) => {
@@ -514,17 +510,50 @@
       if (!(bb >= sb)) return $("#bbIn").focus();
       if (sb % 5 || bb % 5) return toast("Blinds need to be in 5¢ steps");
       commit((s) => { s.blinds = { sb, bb }; });
+      toStep("chips");
     };
-    $("#addForm").onsubmit = (e) => {
-      e.preventDefault();
-      const name = $("#nameIn").value.trim();
-      if (!name) return;
-      if (state.players.some((p) => p.name.toLowerCase() === name.toLowerCase())) return toast(`${name} is already at the table`);
-      commit((s) => s.players.push(newPlayer(name)));
-      $("#nameIn").focus();
-    };
-    app.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => commit((s) => { s.players = s.players.filter((p) => p.id !== b.dataset.rm); }));
-    animateSeats();
+
+    if (step === "chips") {
+      const dn = $("#denoms");
+      if (dn) dn.onclick = (e) => {
+        const b = e.target.closest("[data-d]"); if (!b) return;
+        const v = +b.dataset.d, set = chipSetFor(bl);
+        const next = set.includes(v) ? set.filter((x) => x !== v) : [...set, v].sort((a, c) => a - c);
+        commit((s) => { s.chips = { key: `${bl.sb}/${bl.bb}`, set: next }; });
+      };
+      // a typed chip value must be a multiple of the smallest chip, so blinds and change still work
+      const chipValue = (input, min) => {
+        const { d0 } = chipOptions(bl);
+        const v = Math.round(parseFloat(input.value) * 100);
+        if (!(v > 0)) { input.focus(); return null; }
+        if (v % d0) { toast(`Chip values need to be multiples of ${blindLabel(d0)}`); input.focus(); return null; }
+        if (min && v < min) { toast(`The highest chip can't be below ${blindLabel(min)}: the blinds need it`); input.value = min / 100; return null; }
+        return v;
+      };
+      const saveSet = (next) => commit((s) => { s.chips = { key: `${bl.sb}/${bl.bb}`, set: [...new Set(next)].sort((a, c) => a - c) }; });
+      const tc = $("#topChip");
+      if (tc) tc.onchange = () => {
+        const { required } = chipOptions(bl);
+        const top = chipValue(tc, required[required.length - 1]);
+        if (top) saveSet([...chipSetFor(bl).filter((x) => x < top), top, ...required]);
+      };
+      const oc = $("#otherChip");
+      if (oc) oc.onclick = () => { otherChipOpen = true; render(); $("#addChip")?.focus(); };
+      const cf = $("#chipFields");
+      if (cf) cf.onsubmit = (e) => {
+        e.preventDefault();
+        const add = $("#addChip");
+        if (!add) return;
+        const v = chipValue(add);
+        if (!v) return;
+        const set = chipSetFor(bl);
+        if (set.includes(v)) return toast(`${blindLabel(v)} is already in`);
+        otherChipOpen = false;
+        saveSet([...set, v]);
+        toast(v > set[set.length - 1] ? `Added ${blindLabel(v)} as the highest chip` : `Added ${blindLabel(v)}`);
+      };
+    }
+
     const st = $("#start");
     if (st) st.onclick = () => {
       go((s) => {
@@ -533,6 +562,7 @@
         s.players.forEach((p) => { if (!totalIn(p.id)) s.log.push({ id: uid(), pid: p.id, type: "buyin", amount: s.buyIn, ts: Date.now() }); });
       }).then(dealAnimation);
     };
+    if (step === "players" && !fresh && !n) $("#nameIn")?.focus({ preventScroll: true });
   }
 
   function newPlayer(name) {
@@ -1017,7 +1047,7 @@
         home = false;
         go((s) => {
           const players = keep ? s.players.map((p) => ({ ...p, busted: false, left: false, final: null })) : [];
-          Object.assign(s, fresh(), { buyIn: s.buyIn, blinds: s.blinds, buyInPicked: s.buyInPicked, players });
+          Object.assign(s, fresh(), { buyIn: s.buyIn, blinds: s.blinds, buyInPicked: s.buyInPicked, players, setupStep: "players" });
         }, { undoable: true, msg: keep ? "New game, same players" : "Table cleared" });
       };
       $("#keep", m).onclick = () => reset(true);
@@ -1242,7 +1272,7 @@
     const k = e.key.toLowerCase();
     if (k === "n") {
       e.preventDefault();
-      if (state.stage === "setup") $("#nameIn")?.focus();
+      if (state.stage === "setup") { if (setupStep() !== "players") toStep("players"); else $("#nameIn")?.focus(); }
       else if (state.stage === "table") openAddLate();
     } else if (k === "d" && state.stage === "setup") {
       const b = $("#start"); if (b && !b.disabled) b.click();
