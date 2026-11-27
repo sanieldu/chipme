@@ -3,7 +3,7 @@
 A minimal poker buy-in counter and settle-up ledger. No build step, no backend: `index.html`, `styles.css`, `chips.js` and `app.js`.
 
 ## Features
-- Pick a buy-in ($20, $25, $50 or a custom amount) and seat your friends at a drawn table, one seat each
+- Setup asks one thing at a time: seat your friends at a drawn table, then the buy-in ($20, $25, $50 or the purple C chip for any amount) unfolds, then the blinds, then the chips, then the deal button
 - Pick the blinds (10¢/20¢ up to $2/$5, or custom), then the chips your set has: the ones the blinds need are always in, and you choose the rest (such as $2 and $5), type in the highest chip and add any other value your set has (a $3 or $50 chip)
 - Get the chips to hand each player, counted by the optimiser in `chips.js` (below), plus the totals for the table and a warning for short stacks
 - During the game, the money in play (everything bought in, less early cash-outs) sits above the table; the table shows each seat's buy-ins and its chips as overlapping stacks
@@ -19,7 +19,7 @@ A minimal poker buy-in counter and settle-up ledger. No build step, no backend: 
 - Everything autosaves to `localStorage`, so refreshing or closing the tab doesn't lose the game
 
 ## How the chips are chosen
-With no chips picked yet, `chips.js` suggests a set from the blinds and the main buy-in; once you pick your chips it counts with exactly those. A stack has to stay playable: the smallest chip divides both blinds, every value can be broken into the ones below it, the chips at or under the big blind cover about 10 big blinds, and no one value holds more than about 40% of a stack, so ordinary bets of a few big blinds need no change. Among the sets and counts that pass (values from 5¢ to $100, including 20¢ and $2), it takes the one with the fewest chips, with the smallest values counting extra and a small charge for each extra value. A rebuy of another size is counted in the same set.
+With no chips picked yet, `chips.js` suggests a set from the blinds and the main buy-in; once you pick your chips it counts with exactly those. A stack has to stay playable: the smallest chip divides both blinds, each player gets 10-20 of it to post blinds with (about 10% of the stack, as home-game guides advise), every value can be broken into the ones below it, the chips at or under the big blind cover about 10 big blinds, and no one value holds more than about 40% of a stack, so ordinary bets of a few big blinds need no change. Among the sets and counts that pass (values from 5¢ to $100, including 20¢ and $2), it takes the one with the fewest chips, with the smallest values counting extra and a small charge for each extra value. A rebuy of another size is counted in the same set.
 
 ```bash
 node chips.test.js

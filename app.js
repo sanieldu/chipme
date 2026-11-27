@@ -12,6 +12,7 @@
   // clay-chip palette (edge spots + inlay are derived from the base colour in CSS)
   const CHIP_COLORS = ["#d63a3a", "#1f8fd6", "#1e9b4a", "#f07a2c", "#232325", "#5b3aa6", "#f2c230", "#f1ede3"];
   const PRESET_COLORS = ["#1f8fd6", "#1e9b4a", "#f07a2c"];   // $20 blue, $25 green, $50 orange
+  const CUSTOM_COLOR = "#6b4aa0";                            // the purple C chip: type your own
   // blind levels offered on the setup page (cents); the chip set itself comes from chips.js
   const BLINDS = [
     { sb: 10, bb: 20 }, { sb: 25, bb: 50 }, { sb: 50, bb: 100 }, { sb: 100, bb: 200 }, { sb: 200, bb: 500 },
@@ -42,6 +43,7 @@
     settleAnyway: false,
     startedAt: null,
     savedId: null,           // the past-games record this game was saved as
+    buyInPicked: false,      // setup asks one thing at a time: players, buy-in, blinds, chips
   });
 
   let state = load();
@@ -50,7 +52,10 @@
   function load() {
     try {
       const s = JSON.parse(localStorage.getItem(KEY));
-      if (s && Array.isArray(s.players)) return { ...fresh(), ...s };
+      if (s && Array.isArray(s.players)) {
+        if (s.buyInPicked === undefined) s.buyInPicked = !!s.blinds || s.stage !== "setup";
+        return { ...fresh(), ...s };
+      }
     } catch (_) {}
     return fresh();
   }
@@ -373,11 +378,21 @@
 
   /* ----- setup ----- */
   let blindsCustomOpen = false;
+  // Setup asks one question at a time. A step that appears for the first time unfolds from under
+  // the one before it; steps already answered just stand (also after a refresh).
+  let shownSteps = new Set();
+  let customBuyOpen = false;
   function renderSetup(fresh) {
-    const custom = !PRESETS.includes(state.buyIn);
+    const custom = state.buyInPicked && !PRESETS.includes(state.buyIn);
     const bl = state.blinds;
     const customBlinds = blindsCustomOpen || (bl && !BLINDS.some((b) => b.sb === bl.sb && b.bb === bl.bb));
     const n = state.players.length;
+    const steps = { buyin: n >= 2 || state.buyInPicked, blinds: state.buyInPicked, chips: state.buyInPicked && !!bl };
+    const ready = n >= 2 && state.buyInPicked && !!bl;
+    if (fresh) shownSteps = new Set(Object.keys(steps).filter((k) => steps[k]).concat(ready ? ["deal"] : []));
+    const unfold = (k) => { const first = !shownSteps.has(k); shownSteps.add(k); return first ? " unfold" : ""; };
+    const step = (k, label, body, d) => steps[k] ? sec(label, body, d).replace('class="sec reveal"', `class="sec reveal${unfold(k)}" data-step="${k}"`) : "";
+    const showCustom = customBuyOpen || custom;
     app.innerHTML = `
       ${heading("Shuffle up", "and deal.")}
       <p class="sub">Seat your friends, pick the stakes, and chipme keeps the ledger.</p>
@@ -389,18 +404,21 @@
           <input id="nameIn" class="input grow" placeholder="Friend's name" maxlength="24" autocomplete="off" aria-label="Friend's name" />
           <button class="btn primary" type="submit">Take a seat <kbd>↵</kbd></button>
         </form>
-        ${n < 2 ? `<p class="muted hint">Seat at least two players to start. Press <kbd class="mono">N</kbd> to jump here.</p>` : ""}`, 2)}
+        ${n < 2 ? `<p class="muted hint">Seat at least two players and the buy-in comes next. Press <kbd class="mono">N</kbd> to jump here.</p>` : ""}`, 2)}
 
-      ${sec("Buy-in", `
+      ${step("buyin", "Buy-in", `
         <div class="presets" id="presets">
-          ${PRESETS.map((v, i) => `<button class="preset ${state.buyIn === v ? "sel" : ""}" data-v="${v}" aria-label="$${v} buy-in">${chipHTML(PRESET_COLORS[i], v, 64)}</button>`).join("")}
+          ${PRESETS.map((v, i) => `<button class="preset ${state.buyInPicked && state.buyIn === v ? "sel" : ""}" data-v="${v}" aria-label="$${v} buy-in">${chipHTML(PRESET_COLORS[i], v, 64)}</button>`).join("")}
+          <button class="preset ${showCustom ? "sel" : ""}" data-v="custom" aria-label="Custom buy-in" aria-expanded="${showCustom}">${chipHTML(CUSTOM_COLOR, "C", 64)}</button>
         </div>
-        <div class="row custom-row">
-          <label class="muted" for="customBuy">Custom</label>
-          <div class="money grow"><input id="customBuy" class="input" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="Any amount" value="${custom ? state.buyIn : ""}" /></div>
-        </div>`, 3)}
+        ${showCustom ? `
+          <form class="row custom-row${custom ? "" : " unfold-in"}" id="customForm">
+            <label class="muted" for="customBuy">Custom buy-in</label>
+            <div class="money grow"><input id="customBuy" class="input" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="Any amount" value="${custom ? state.buyIn : ""}" /></div>
+            <button class="btn" type="submit">Set</button>
+          </form>` : ""}`, 3)}
 
-      ${sec("Blinds", `
+      ${step("blinds", "Blinds", `
         <div class="pills" id="blinds">
           ${BLINDS.map((b, i) => `<button class="pill ${bl && !customBlinds && bl.sb === b.sb && bl.bb === b.bb ? "sel" : ""}" data-b="${i}">${blindsText(b)}</button>`).join("")}
           <button class="pill ${customBlinds ? "sel" : ""}" data-b="custom">Custom</button>
@@ -411,27 +429,43 @@
             <span class="muted">/</span>
             <div class="money grow"><input id="bbIn" class="input" type="number" inputmode="decimal" min="0.05" step="0.05" placeholder="Big" aria-label="Big blind" value="${bl ? bl.bb / 100 : ""}" /></div>
             <button class="btn" type="submit">Set</button>
-          </form>` : ""}
-        ${bl ? "" : breakdownHTML(state.buyIn, n)}`, 4)}
+          </form>` : ""}`, 4)}
 
-      ${bl ? sec("Chips", `${chipsHTML(bl)}${breakdownHTML(state.buyIn, n)}`, 5) : ""}
+      ${step("chips", "Chips", bl ? `${chipsHTML(bl)}${breakdownHTML(state.buyIn, n)}` : "", 5)}
 
-      <div class="bar"><div class="bar-inner">
-        <button class="btn felt block" id="start" ${state.players.length < 2 || !(state.buyIn > 0) ? "disabled" : ""}>
+      ${ready ? `<div class="bar${unfold("deal") ? " rise" : ""}"><div class="bar-inner">
+        <button class="btn felt block" id="start">
           Deal everyone in · ${money(state.buyIn)} each <kbd>D</kbd>
         </button>
-      </div></div>`;
+      </div></div>` : ""}`;
 
-    $("#presets").onclick = (e) => {
+    // bring a step that just appeared into view, gently
+    const born = app.querySelector(".sec.unfold");
+    if (born && !fresh) setTimeout(() => born.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "nearest" }), 160);
+
+    const pr = $("#presets");
+    if (pr) pr.onclick = (e) => {
       const b = e.target.closest(".preset"); if (!b) return;
-      commit((s) => { s.buyIn = +b.dataset.v; });
+      if (b.dataset.v === "custom") {
+        customBuyOpen = true;
+        render();
+        $("#customBuy")?.focus();
+        return;
+      }
+      customBuyOpen = false;
+      commit((s) => { s.buyIn = +b.dataset.v; s.buyInPicked = true; });
       chipBurst(app.querySelector(`.preset[data-v="${b.dataset.v}"]`), PRESET_COLORS[PRESETS.indexOf(+b.dataset.v)], 6);
     };
-    $("#customBuy").onchange = (e) => {
-      const v = cents(parseFloat(e.target.value));
-      if (v > 0) commit((s) => { s.buyIn = v; });
+    const cfm = $("#customForm");
+    if (cfm) cfm.onsubmit = (e) => {
+      e.preventDefault();
+      const inp = $("#customBuy"), v = cents(parseFloat(inp.value));
+      if (!(v > 0)) return inp.focus();
+      customBuyOpen = false;
+      commit((s) => { s.buyIn = v; s.buyInPicked = true; });
     };
-    $("#blinds").onclick = (e) => {
+    const blp = $("#blinds");
+    if (blp) blp.onclick = (e) => {
       const b = e.target.closest(".pill"); if (!b) return;
       if (b.dataset.b === "custom") { blindsCustomOpen = true; render(); $("#sbIn")?.focus(); return; }
       blindsCustomOpen = false;
@@ -491,7 +525,8 @@
     };
     app.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => commit((s) => { s.players = s.players.filter((p) => p.id !== b.dataset.rm); }));
     animateSeats();
-    $("#start").onclick = () => {
+    const st = $("#start");
+    if (st) st.onclick = () => {
       go((s) => {
         s.stage = "table";
         s.startedAt = Date.now();
@@ -982,7 +1017,7 @@
         home = false;
         go((s) => {
           const players = keep ? s.players.map((p) => ({ ...p, busted: false, left: false, final: null })) : [];
-          Object.assign(s, fresh(), { buyIn: s.buyIn, blinds: s.blinds, players });
+          Object.assign(s, fresh(), { buyIn: s.buyIn, blinds: s.blinds, buyInPicked: s.buyInPicked, players });
         }, { undoable: true, msg: keep ? "New game, same players" : "Table cleared" });
       };
       $("#keep", m).onclick = () => reset(true);
@@ -1077,7 +1112,7 @@
   }
 
   // a word rises out of its mask, holds, and lifts away
-  function banner(text, color = "var(--ink)") {
+  function banner(text, color = "var(--ink)", duration = 1950) {
     const el = spawn("fx-banner", `<span>${esc(text)}</span>`, { color });
     if (reduced) { el.remove(); return; }
     el.firstChild.animate([
@@ -1085,7 +1120,7 @@
       { transform: "translateY(0)", offset: .28 },
       { transform: "translateY(0)", offset: .74 },
       { transform: "translateY(-110%)" },
-    ], { duration: 1950, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards" }).onfinish = () => el.remove();
+    ], { duration, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards" }).onfinish = () => el.remove();
   }
 
   // BUY-IN: chips leave every seat for the pot
@@ -1178,20 +1213,26 @@
     });
   }
 
+  // BALANCED: no burst. The balance card fills with a slow green wash, a handful of chips drift
+  // up from its tick and fade, and the word rises and settles at an unhurried pace.
   function confetti() {
     if (reduced) return;
-    for (let i = 0; i < 28; i++) {
-      const el = spawn("fx-chip", "", { left: innerWidth / 2 - 11 + "px", top: innerHeight * .42 + "px", width: "22px", height: "22px" });
-      el.style.setProperty("--c", CHIP_COLORS[i % CHIP_COLORS.length]);
-      const ang = -Math.PI / 2 + rand(-1.1, 1.1), v = rand(160, 320);
-      const dx = Math.cos(ang) * v, dy = Math.sin(ang) * v;
-      animate(el, [
-        { transform: "translate(0,0) scale(.5)", opacity: 0 },
-        { transform: `translate(${dx}px,${dy}px) scale(1)`, opacity: 1, offset: .45 },
-        { transform: `translate(${dx * 1.1}px,${dy + 260}px) scale(.8)`, opacity: 0 },
-      ], { duration: rand(1700, 2300), delay: rand(0, 160), easing: "cubic-bezier(.22,1,.36,1)" });
-    }
-    banner("Balanced", "var(--green)");
+    requestAnimationFrame(() => {
+      const card = app.querySelector(".balance.ok");
+      card?.classList.add("calm");
+      const at = center(card?.querySelector(".icon"));
+      for (let i = 0; i < 9; i++) {
+        const el = spawn("fx-chip", "", { left: at.x - 9 + "px", top: at.y - 9 + "px", width: "18px", height: "18px" });
+        el.style.setProperty("--c", CHIP_COLORS[i % CHIP_COLORS.length]);
+        const dx = rand(-70, 70), rise = rand(90, 170);
+        animate(el, [
+          { transform: "translate(0,0) scale(.6)", opacity: 0 },
+          { transform: `translate(${dx * .5}px,${-rise * .5}px) scale(.9)`, opacity: .9, offset: .35 },
+          { transform: `translate(${dx}px,${-rise}px) scale(.8)`, opacity: 0 },
+        ], { duration: rand(2600, 3300), delay: 300 + i * 120, easing: "cubic-bezier(.22,1,.36,1)" });
+      }
+      banner("Balanced", "var(--green)", 3200);
+    });
   }
 
   // shortcuts: N seat or add a player, D deal, C count the chips; never while typing or in a dialog

@@ -1,6 +1,7 @@
 /* chipme chip optimiser: picks the chip values and the counts for a stack.
-   A stack has to stay playable: the smallest chip divides both blinds, every value can be broken
-   into the ones below it, chips at or under the big blind cover about 10 big blinds, and no value
+   A stack has to stay playable: the smallest chip divides both blinds, each player gets 10-20 of
+   it to post blinds with (about 10% of the stack, as home-game guides advise), every value can be
+   broken into the ones below it, chips at or under the big blind cover about 10 big blinds, and no value
    holds more than about 40% of the stack (so ordinary bets don't need change). Among the stacks
    that pass, it takes the one with the fewest chips, counting the smallest values extra and
    charging a little for every extra value in the set. Cents throughout. */
@@ -9,7 +10,7 @@
 
   const CANDS = [5, 10, 20, 25, 50, 100, 200, 500, 1000, 2500, 10000];
   const W = [0.6, 0.3];      // extra cost per chip for the smallest and second-smallest value
-  const DENOM_COST = 2;      // each extra value makes the set harder to read
+  const DENOM_COST = 4;      // each extra value makes the set harder to read (guides favour 4-5 values)
 
   // cheapest exact way to make `r` cents out of `set`, given a cost per chip; null if impossible
   function fill(set, r, cost) {
@@ -64,6 +65,11 @@
     // enough of each value to break the next one up (two of them for the smallest chip)
     const n = set.map(() => 1);
     for (let i = 0; i < k - 1; i++) n[i] = Math.max(n[i], Math.ceil(((i === 0 ? 2 : 1) * set[i + 1]) / set[i]));
+    // blind chips: the smallest chip posts the small blind every orbit, so home-game guides give
+    // each player 8-20 of them, about 10-15% of the stack. Aim for 10% with at least 10 and at
+    // most 20, never more than a quarter of the stack.
+    const blindChips = Math.min(20, Math.max(10, Math.ceil((0.1 * T) / set[0])));
+    n[0] = Math.max(n[0], Math.min(blindChips, Math.floor((0.25 * T) / set[0])));
     // chips at or under the big blind cover about 10 big blinds (a quarter of a short stack)
     const L = Math.min(10 * bb, Math.ceil((T * 0.25) / set[0]) * set[0]);
     const low = set.map((d, i) => i).filter((i) => set[i] <= bb);
