@@ -4,8 +4,15 @@
   "use strict";
 
   const KEY = "chipme:v1";
-  const PRESETS = [5, 10, 20, 25, 50, 100];
-  const CHIP_COLORS = ["#e5484d", "#3e63dd", "#18a058", "#1c1d1f", "#8e4ec6", "#e8b33b", "#f76b15", "#12a594"];
+  const PRESETS = [20, 25, 50];
+  const CHIP_COLORS = ["#3e63dd", "#e5484d", "#18a058", "#1c1d1f", "#8e4ec6", "#e8b33b", "#f76b15", "#12a594"];
+  // standard home-game chip set
+  const DENOMS = [
+    { v: 25, cents: 2500, name: "black", color: "#1c1d1f" },
+    { v: 5, cents: 500, name: "green", color: "#18a058" },
+    { v: 1, cents: 100, name: "red", color: "#e5484d" },
+    { v: 0.25, cents: 25, name: "white", color: "#f4f2ec" },
+  ];
   const AV_COLORS = ["#e5484d", "#3e63dd", "#18a058", "#8e4ec6", "#f76b15", "#12a594", "#d6409f", "#978365"];
 
   const $ = (s, el = document) => el.querySelector(s);
@@ -62,6 +69,47 @@
   const entries = (pid) => state.log.filter((l) => l.pid === pid && (l.type === "buyin" || l.type === "rebuy")).length;
   const time = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
+  /* ---------------- chip breakdown ----------------
+     ~$5 in whites for blinds, ~30% in reds, the rest in greens
+     (blacks once a stack has lots of greens). Works in cents to avoid float drift. */
+  function chipBreakdown(amount) {
+    let cents = Math.round(amount * 100);
+    if (!(cents > 0)) return null;
+    const leftover = cents % 25;          // can't be made with chips
+    cents -= leftover;
+    const count = { 2500: 0, 500: 0, 100: 0, 25: 0 };
+    count[25] = Math.floor(Math.min(cents * 0.25, 500) / 25);
+    let rem = cents - count[25] * 25;
+    const redTarget = Math.min(rem, Math.round(cents * 0.3));
+    count[500] = Math.max(0, Math.floor((rem - redTarget) / 500));
+    rem -= count[500] * 500;
+    count[100] = Math.floor(rem / 100);
+    count[25] += Math.round((rem - count[100] * 100) / 25);
+    if (count[500] > 10) {
+      count[2500] = Math.floor((count[500] - 6) / 5);
+      count[500] -= count[2500] * 5;
+    }
+    const rows = DENOMS.filter((d) => count[d.cents] > 0).map((d) => ({ ...d, n: count[d.cents] }));
+    return { rows, total: rows.reduce((a, r) => a + r.n, 0), leftover: leftover / 100 };
+  }
+
+  function chipLabel(d) { return d.v < 1 ? `${d.v * 100}¢` : `$${d.v}`; }
+
+  function breakdownHTML(amount, players = 0, compact = false) {
+    const b = chipBreakdown(amount);
+    if (!b) return "";
+    const rows = b.rows.map((r) => `
+      <li><span class="denom-chip" style="--c:${r.color}">${chipLabel(r)}</span>
+        <span class="grow"><b class="num">${r.n}</b> × ${chipLabel(r)} <span class="muted">${r.name}</span></span>
+        ${compact ? "" : `<span class="num muted">${money((r.n * r.cents) / 100)}</span>`}</li>`).join("");
+    const bank = players > 1 && !compact
+      ? `<p class="muted bank">For ${players} players you'll need ${b.rows.map((r) => `${r.n * players} ${r.name}`).join(", ")}.</p>` : "";
+    const left = b.leftover ? `<p class="muted bank">+ ${money(b.leftover)} that can't be made with chips.</p>` : "";
+    return `<div class="breakdown ${compact ? "compact" : ""}">
+      <div class="bd-head">${compact ? "That's" : "Give each player"} <b class="num">${b.total} chips</b></div>
+      <ul>${rows}</ul>${bank}${left}</div>`;
+  }
+
   /* ---------------- render ---------------- */
   function render() {
     const order = ["setup", "table", "settle"];
@@ -93,6 +141,7 @@
         <label class="muted" for="customBuy" style="font-size:14px">Custom</label>
         <div class="money grow"><input id="customBuy" class="input num" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="Any amount" value="${custom ? state.buyIn : ""}" /></div>
       </div>
+      ${breakdownHTML(state.buyIn, state.players.length)}
 
       <h2>Players <span class="muted" style="text-transform:none;letter-spacing:0">· ${state.players.length}</span></h2>
       <form id="addForm" class="row">
@@ -391,13 +440,21 @@
   function amountPicker(def) {
     const opts = [...new Set([def / 2, def, def * 1.5, def * 2].map(cents))].filter((v) => v > 0);
     return `<div class="quick">${opts.map((v) => `<button type="button" class="btn small ${v === def ? "primary" : ""}" data-q="${v}">${money(v)}</button>`).join("")}</div>
-      <div class="money"><input id="amt" class="input num" type="number" inputmode="decimal" min="0.01" step="0.01" value="${def}" /></div>`;
+      <div class="money"><input id="amt" class="input num" type="number" inputmode="decimal" min="0.01" step="0.01" value="${def}" /></div>
+      <div id="bd">${breakdownHTML(def, 0, true)}</div>`;
   }
   function bindPicker(m) {
     const amt = $("#amt", m);
+    const bd = $("#bd", m);
+    const refresh = () => { if (bd) bd.innerHTML = breakdownHTML(parseFloat(amt.value), 0, true); };
+    amt.addEventListener("input", () => {
+      refresh();
+      m.querySelectorAll("[data-q]").forEach((x) => x.classList.toggle("primary", +x.dataset.q === +amt.value));
+    });
     m.querySelectorAll("[data-q]").forEach((b) => b.onclick = () => {
       amt.value = b.dataset.q;
       m.querySelectorAll("[data-q]").forEach((x) => x.classList.toggle("primary", x === b));
+      refresh();
     });
     amt.select();
     return amt;
