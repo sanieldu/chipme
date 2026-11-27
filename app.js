@@ -6,12 +6,20 @@
   const KEY = "chipme:v1";
   const PRESETS = [20, 25, 50];
   const CHIP_COLORS = ["#3e63dd", "#e5484d", "#18a058", "#1c1d1f", "#8e4ec6", "#e8b33b", "#f76b15", "#12a594"];
-  // standard home-game chip set
-  const DENOMS = [
-    { v: 25, cents: 2500, name: "black", color: "#1c1d1f" },
-    { v: 5, cents: 500, name: "green", color: "#18a058" },
-    { v: 1, cents: 100, name: "red", color: "#e5484d" },
-    { v: 0.25, cents: 25, name: "white", color: "#f4f2ec" },
+  // blind levels -> the chip values a home game would use for them (cents)
+  const BLINDS = [
+    { sb: 10, bb: 20, chips: [10, 50, 100, 500] },
+    { sb: 25, bb: 50, chips: [25, 100, 500, 2500] },
+    { sb: 50, bb: 100, chips: [50, 100, 500, 2500] },
+    { sb: 100, bb: 200, chips: [100, 500, 2500, 10000] },
+    { sb: 200, bb: 500, chips: [100, 500, 2500, 10000] },
+  ];
+  const LADDER = [5, 10, 25, 50, 100, 200, 500, 1000, 2500, 10000, 50000];
+  const RANK = [
+    { name: "white", color: "#f4f2ec" },
+    { name: "red", color: "#e5484d" },
+    { name: "green", color: "#18a058" },
+    { name: "black", color: "#1c1d1f" },
   ];
   const AV_COLORS = ["#e5484d", "#3e63dd", "#18a058", "#8e4ec6", "#f76b15", "#12a594", "#d6409f", "#978365"];
 
@@ -27,6 +35,7 @@
     buyIn: 20,
     players: [],             // {id, name, color, busted, final}
     log: [],                 // {id, pid, type: buyin|rebuy|bust|back, amount, ts}
+    blinds: null,            // {sb, bb} in cents; asked before showing chip counts
     settleAnyway: false,
     startedAt: null,
   });
@@ -69,45 +78,67 @@
   const entries = (pid) => state.log.filter((l) => l.pid === pid && (l.type === "buyin" || l.type === "rebuy")).length;
   const time = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
-  /* ---------------- chip breakdown ----------------
-     ~$5 in whites for blinds, ~30% in reds, the rest in greens
-     (blacks once a stack has lots of greens). Works in cents to avoid float drift. */
-  function chipBreakdown(amount) {
-    let cents = Math.round(amount * 100);
-    if (!(cents > 0)) return null;
-    const leftover = cents % 25;          // can't be made with chips
-    cents -= leftover;
-    const count = { 2500: 0, 500: 0, 100: 0, 25: 0 };
-    count[25] = Math.floor(Math.min(cents * 0.25, 500) / 25);
-    let rem = cents - count[25] * 25;
-    const redTarget = Math.min(rem, Math.round(cents * 0.3));
-    count[500] = Math.max(0, Math.floor((rem - redTarget) / 500));
-    rem -= count[500] * 500;
-    count[100] = Math.floor(rem / 100);
-    count[25] += Math.round((rem - count[100] * 100) / 25);
-    if (count[500] > 10) {
-      count[2500] = Math.floor((count[500] - 6) / 5);
-      count[500] -= count[2500] * 5;
+  /* ---------------- blinds & chip breakdown ----------------
+     All math in cents. The smallest chip covers the small blind; about 10 big
+     blinds go in small chips for posting/betting, ~30% in the 2nd chip, the rest
+     in the 3rd, with the 4th used once a stack holds lots of the 3rd. */
+  const blindLabel = (c) => (c < 100 ? `${c}¢` : `$${c / 100}`);
+  const blindsText = (b) => `${blindLabel(b.sb)}/${blindLabel(b.bb)}`;
+
+  function chipSet(b) {
+    const preset = BLINDS.find((x) => x.sb === b.sb && x.bb === b.bb);
+    if (preset) return preset.chips;
+    // custom blinds: smallest chip divides both blinds, then each chip >= 4x the last
+    const d0 = [...LADDER].reverse().find((v) => b.sb % v === 0 && b.bb % v === 0) || 5;
+    const set = [d0];
+    while (set.length < 4) {
+      const next = LADDER.find((v) => v >= set[set.length - 1] * 4);
+      if (!next) break;
+      set.push(next);
     }
-    const rows = DENOMS.filter((d) => count[d.cents] > 0).map((d) => ({ ...d, n: count[d.cents] }));
-    return { rows, total: rows.reduce((a, r) => a + r.n, 0), leftover: leftover / 100 };
+    return set;
   }
 
-  function chipLabel(d) { return d.v < 1 ? `${d.v * 100}¢` : `$${d.v}`; }
+  function chipBreakdown(amount, blinds) {
+    let total = Math.round(amount * 100);
+    if (!(total > 0) || !blinds) return null;
+    const d = chipSet(blinds);
+    const leftover = total % d[0];
+    total -= leftover;
+    const n = d.map(() => 0);
+    n[0] = Math.floor(Math.min(blinds.bb * 10, total * 0.25) / d[0]);
+    let rem = total - n[0] * d[0];
+    if (d[2]) {
+      const target = Math.min(rem, Math.round(total * 0.3), d[1] * 20);
+      n[2] = Math.max(0, Math.floor((rem - target) / d[2]));
+      rem -= n[2] * d[2];
+    }
+    if (d[1]) { n[1] = Math.floor(rem / d[1]); rem -= n[1] * d[1]; }
+    n[0] += rem / d[0];
+    if (d[3] && n[2] > 15 && d[3] % d[2] === 0) {
+      const k = d[3] / d[2];
+      n[3] = Math.floor((n[2] - 10) / k);
+      n[2] -= n[3] * k;
+    }
+    const rows = d.map((c, i) => ({ cents: c, n: n[i], ...RANK[i] })).filter((r) => r.n > 0).reverse();
+    return { rows, total: rows.reduce((a, r) => a + r.n, 0), leftover: leftover / 100, bbs: Math.floor(total / blinds.bb) };
+  }
 
   function breakdownHTML(amount, players = 0, compact = false) {
-    const b = chipBreakdown(amount);
+    if (!state.blinds) return compact ? "" : `<div class="breakdown wait muted">Pick the blinds and chipme will tell you how many chips to hand out.</div>`;
+    const b = chipBreakdown(amount, state.blinds);
     if (!b) return "";
     const rows = b.rows.map((r) => `
-      <li><span class="denom-chip" style="--c:${r.color}">${chipLabel(r)}</span>
-        <span class="grow"><b class="num">${r.n}</b> × ${chipLabel(r)} <span class="muted">${r.name}</span></span>
+      <li><span class="denom-chip" style="--c:${r.color}">${blindLabel(r.cents)}</span>
+        <span class="grow"><b class="num">${r.n}</b> × ${blindLabel(r.cents)} <span class="muted">${r.name}</span></span>
         ${compact ? "" : `<span class="num muted">${money((r.n * r.cents) / 100)}</span>`}</li>`).join("");
     const bank = players > 1 && !compact
       ? `<p class="muted bank">For ${players} players you'll need ${b.rows.map((r) => `${r.n * players} ${r.name}`).join(", ")}.</p>` : "";
     const left = b.leftover ? `<p class="muted bank">+ ${money(b.leftover)} that can't be made with chips.</p>` : "";
+    const short = !compact && b.bbs < 40 ? `<p class="muted bank">Heads up: that's only ${b.bbs} big blinds, a short stack at ${blindsText(state.blinds)}.</p>` : "";
     return `<div class="breakdown ${compact ? "compact" : ""}">
-      <div class="bd-head">${compact ? "That's" : "Give each player"} <b class="num">${b.total} chips</b></div>
-      <ul>${rows}</ul>${bank}${left}</div>`;
+      <div class="bd-head">${compact ? "That's" : "Give each player"} <b class="num">${b.total} chips</b> <span class="muted">· ${b.bbs} big blinds</span></div>
+      <ul>${rows}</ul>${bank}${left}${short}</div>`;
   }
 
   /* ---------------- render ---------------- */
@@ -127,8 +158,11 @@
   }
 
   /* ----- setup ----- */
+  let blindsCustomOpen = false;
   function renderSetup() {
     const custom = !PRESETS.includes(state.buyIn);
+    const bl = state.blinds;
+    const customBlinds = blindsCustomOpen || (bl && !BLINDS.some((b) => b.sb === bl.sb && b.bb === bl.bb));
     app.innerHTML = `
       <h1>Shuffle up &amp; deal.</h1>
       <p class="sub">Pick the buy-in, add your friends, and chipme keeps the ledger.</p>
@@ -141,6 +175,19 @@
         <label class="muted" for="customBuy" style="font-size:14px">Custom</label>
         <div class="money grow"><input id="customBuy" class="input num" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="Any amount" value="${custom ? state.buyIn : ""}" /></div>
       </div>
+
+      <h2>Blinds</h2>
+      <div class="pills" id="blinds">
+        ${BLINDS.map((b, i) => `<button class="pill ${bl && !customBlinds && bl.sb === b.sb && bl.bb === b.bb ? "sel" : ""}" data-b="${i}">${blindsText(b)}</button>`).join("")}
+        <button class="pill ${customBlinds ? "sel" : ""}" data-b="custom">Custom</button>
+      </div>
+      ${customBlinds ? `
+        <form class="row" id="customBlinds" style="margin-top:10px">
+          <div class="money grow"><input id="sbIn" class="input num" type="number" inputmode="decimal" min="0.05" step="0.05" placeholder="Small" value="${bl ? bl.sb / 100 : ""}" /></div>
+          <span class="muted">/</span>
+          <div class="money grow"><input id="bbIn" class="input num" type="number" inputmode="decimal" min="0.05" step="0.05" placeholder="Big" value="${bl ? bl.bb / 100 : ""}" /></div>
+          <button class="btn" type="submit">Set</button>
+        </form>` : ""}
       ${breakdownHTML(state.buyIn, state.players.length)}
 
       <h2>Players <span class="muted" style="text-transform:none;letter-spacing:0">· ${state.players.length}</span></h2>
@@ -166,6 +213,23 @@
     $("#customBuy").onchange = (e) => {
       const v = cents(parseFloat(e.target.value));
       if (v > 0) commit((s) => { s.buyIn = v; });
+    };
+    $("#blinds").onclick = (e) => {
+      const b = e.target.closest(".pill"); if (!b) return;
+      if (b.dataset.b === "custom") { blindsCustomOpen = true; render(); $("#sbIn")?.focus(); return; }
+      blindsCustomOpen = false;
+      const { sb, bb } = BLINDS[+b.dataset.b];
+      commit((s) => { s.blinds = { sb, bb }; });
+    };
+    const cb = $("#customBlinds");
+    if (cb) cb.onsubmit = (e) => {
+      e.preventDefault();
+      const sb = Math.round(parseFloat($("#sbIn").value) * 100);
+      const bb = Math.round(parseFloat($("#bbIn").value) * 100);
+      if (!(sb > 0)) return $("#sbIn").focus();
+      if (!(bb >= sb)) return $("#bbIn").focus();
+      if (sb % 5 || bb % 5) return toast("Blinds need to be in 5¢ steps");
+      commit((s) => { s.blinds = { sb, bb }; });
     };
     $("#addForm").onsubmit = (e) => {
       e.preventDefault();
@@ -205,6 +269,7 @@
           <span>🪑 ${active}/${state.players.length} playing</span>
           <span>🔁 ${rebuys} rebuy${rebuys === 1 ? "" : "s"}</span>
           <span>💵 ${money(state.buyIn)} buy-in</span>
+          ${state.blinds ? `<span>🎲 ${blindsText(state.blinds)} blinds</span>` : ""}
         </div>
         <div class="pot-stack" aria-hidden="true">
           ${Array.from({ length: stacks }, (_, c) => `<div class="col">${Array.from({ length: 3 + ((c * 7 + total) % 6) }, () => `<span class="mini-chip" style="--c:${CHIP_COLORS[c % CHIP_COLORS.length]}"></span>`).join("")}</div>`).join("")}

@@ -4,7 +4,7 @@ A minimal poker buy-in counter and settle-up ledger. No build step, no backend: 
 
 ## Features
 - Pick a buy-in ($20, $25, $50 or a custom amount) and add your friends
-- See how many chips to give each player, by denomination (25¢ white, $1 red, $5 green, $25 black), plus the totals needed for the whole table
+- Pick the blinds (10¢/20¢ up to $2/$5, or custom) and see how many chips of each value to give every player, sized to those blinds, plus the totals for the table and a warning for short stacks
 - Rebuy for the same, more, or less than the buy-in; add late players mid-game
 - Animations for buy-ins (chips fly into the pot), busts (screen cracks, skulls rain) and rebuys (chip fountain, "back from the dead")
 - Ledger of every action, with undo and per-entry delete
