@@ -1,6 +1,6 @@
 # chipme ♠
 
-A minimal poker buy-in counter and settle-up ledger. No build step, no backend: `index.html`, `styles.css`, `chips.js` and `app.js`.
+A minimal poker buy-in counter and settle-up ledger. No build step, no backend: `index.html`, `styles.css`, `chips.js`, `settle.js` and `app.js`.
 
 ## Features
 - Setup is four short screens, one question each: who's playing (a drawn table, one seat per friend), the buy-in ($20, $25, $50 or the purple C chip for any amount), the blinds, and the chips; a row of steps on top shows the answers and steps back to any of them
@@ -23,6 +23,13 @@ With no chips picked yet, `chips.js` suggests a set from the blinds and the main
 
 ```bash
 node chips.test.js
+```
+
+## How the settle-up works
+`settle.js` does the money in whole cents. Only stacks from players still at the table count: busted players sit at $0 and anyone who cashed out is counted by their cash-out. "Settle anyway" splits a miscount to the cent across the counted stacks, and only for the exact amount you approved. Payments are the fewest possible: players are split into the most groups whose results cancel out, and each group of k people needs k-1 payments.
+
+```bash
+node settle.test.js
 ```
 
 ## Run locally

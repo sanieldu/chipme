@@ -63,12 +63,12 @@
   function save() {
     try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (_) {}
   }
-  function commit(mutator, { undoable = false, msg } = {}) {
+  function commit(mutator, { undoable = false, msg, ms } = {}) {
     if (undoable) undoSnap = JSON.stringify(state);
     mutator(state);
     save();
     render();
-    if (msg) toast(msg, undoable);
+    if (msg) toast(msg, undoable, ms);
   }
   // keep multiple tabs in sync
   addEventListener("storage", (e) => { if (e.key === KEY) { state = load(); render(); } });
@@ -81,7 +81,18 @@
     return (v < 0 ? "−$" : sign && v > 0 ? "+$" : "$") + s;
   };
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const initials = (n) => n.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+  // first letter of each word, taken as a whole character (an emoji or accented letter stays intact)
+  const seg = typeof Intl !== "undefined" && Intl.Segmenter ? new Intl.Segmenter() : null;
+  const firstChar = (w) => (seg ? seg.segment(w)[Symbol.iterator]().next().value?.segment : Array.from(w)[0]) || "";
+  const initials = (n) => n.trim().split(/\s+/).map(firstChar).slice(0, 2).join("").toUpperCase() || "?";
+  const C = (x) => Math.round(x * 100);   // dollars -> whole cents
+  // every amount someone types: above $0 and at most $10,000; anything over $1,000 is confirmed first
+  const MAX_AMOUNT = 10000, BIG_AMOUNT = 1000;
+  function amountProblem(v, what = "an amount") {
+    if (!(v > 0)) return `Enter ${what} above $0`;
+    if (v > MAX_AMOUNT) return `${money(MAX_AMOUNT)} is the most chipme takes`;
+    return null;
+  }
   const player = (id) => state.players.find((p) => p.id === id);
   const totalIn = (pid) => state.log.filter((l) => l.pid === pid && (l.type === "buyin" || l.type === "rebuy")).reduce((a, l) => a + l.amount, 0);
   const totalOut = (pid) => state.log.filter((l) => l.pid === pid && l.type === "cashout").reduce((a, l) => a + l.amount, 0);
@@ -202,6 +213,24 @@
   let home = false;   // the home screen sits over a saved game without touching it
   const gameOn = () => state.stage !== "setup" || state.log.length > 0;
   function render() {
+    try { renderScreen(); }
+    catch (err) { console.error(err); renderCrash(); }
+  }
+  // if a saved game can't be drawn, say so and offer a way out instead of a blank page
+  function renderCrash() {
+    shownStage = null;
+    app.classList.remove("enter");
+    app.innerHTML = `
+      ${heading("Something went", "wrong.")}
+      <p class="sub">chipme couldn't draw this game. Your past games are safe.</p>
+      <div class="row wrap" style="margin-top:20px">
+        <button class="btn primary" id="crashRetry">Try again</button>
+        <button class="btn danger" id="crashReset">Reset this game</button>
+      </div>`;
+    $("#crashRetry").onclick = () => render();
+    $("#crashReset").onclick = () => { state = fresh(); undoSnap = null; save(); home = false; render(); };
+  }
+  function renderScreen() {
     const screen = home ? "home" : state.stage === "setup" ? `setup:${setupStep()}` : state.stage;
     const fresh = shownStage !== screen;
     shownStage = screen;
@@ -214,7 +243,10 @@
   }
   // moving between screens cross-fades (View Transitions where the browser has them)
   function go(mutator, opts) {
-    const run = () => { commit(mutator, opts); scrollTo(0, 0); };
+    const run = () => {
+      if (!opts || !opts.undoable) { undoSnap = null; hideToast(); }
+      commit(mutator, opts); scrollTo(0, 0);
+    };
     if (document.startViewTransition && !reduced) return document.startViewTransition(run).finished.catch(() => {});
     run();
     return Promise.resolve();
@@ -256,8 +288,14 @@
   /* ----- the poker table: one seat per player, spaced evenly around the rail ----- */
   let seatPos = {};   // pid -> [x%, y%] from the last render, so seats glide when one is added
   // the table as a technical drawing: outer rail, felt edge, dashed betting line, ticks and a dimension line
-  const PLAN = `<svg class="plan" viewBox="0 0 1000 560" aria-hidden="true">
+  const PLAN = `<svg class="plan" viewBox="0 0 1000 560" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <radialGradient id="feltG" cx="50%" cy="42%" r="68%"><stop offset="0" stop-color="#24774d"/><stop offset=".62" stop-color="#17593a"/><stop offset="1" stop-color="#0e3d28"/></radialGradient>
+        <linearGradient id="railG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#46403c"/><stop offset=".38" stop-color="#211e1c"/><stop offset="1" stop-color="#0b0a0a"/></linearGradient>
+      </defs>
       <rect class="rail-o d" pathLength="1" x="8" y="8" width="984" height="544" rx="272"/>
+      <rect class="rail-sheen" x="18" y="18" width="964" height="524" rx="262"/>
+      <rect class="rail-stitch" x="27" y="27" width="946" height="506" rx="253"/>
       <rect class="rail-i d" pathLength="1" x="44" y="44" width="912" height="472" rx="236"/>
       <rect class="bet" x="170" y="140" width="660" height="280" rx="140"/>
       <path class="tick" d="M500 44v14M500 502v14M44 280h14M942 280h14"/>
@@ -273,23 +311,19 @@
       const stack = mode === "table" && tin > 0 && seated(p)
         ? `<div class="felt-stack" style="left:${sx}%;top:${sy}%">${clusterHTML(tin, CHIP_COLORS[i % 7])}</div>` : "";
       const tag = p.left ? `left · ${money(totalOut(p.id))}` : p.busted ? "out" : money(tin);
-      const code = `S-${String(i + 1).padStart(2, "0")}`;
       return `${stack}<div class="seat ${seated(p) ? "" : "out"} ${p.left ? "left" : ""}" data-seat="${p.id}" data-x="${x}" data-y="${y}" style="left:${x}%;top:${y}%">
           ${avatar(p)}
-          <span class="seat-tag"><i>${code}</i><b>${esc(p.name)}</b>${mode === "table" ? `<em>${tag}</em>` : ""}</span>
+          <span class="seat-tag"><b title="${esc(p.name)}">${esc(p.name)}</b>${mode === "table" ? `<em>${tag}</em>` : ""}</span>
           ${mode === "setup" ? `<button class="seat-x" data-rm="${p.id}" aria-label="Remove ${esc(p.name)}">×</button>` : ""}
         </div>`;
     }).join("");
     const label = mode === "table"
       ? (state.blinds ? `No-limit · ${blindsText(state.blinds)}` : "No-limit hold'em")
-      : n ? `${String(n).padStart(2, "0")} seat${n === 1 ? "" : "s"} taken` : "Add a player to take a seat";
+      : n ? `${n} seat${n === 1 ? "" : "s"} taken` : "Add a player to take a seat";
     const center = `<div class="felt-center"><span class="felt-logo">chipme</span><span class="felt-label">${label}</span></div>`;
-    const blinds = state.blinds ? blindsText(state.blinds) : "—";
-    return `<div class="poker ${mode} ${draw && !reduced ? "draw" : ""}">
-      <span class="poker-note tl">T-01 · No-limit hold'em</span>
+    return `<div class="poker ${mode} ${n >= 7 ? "crowd" : ""} ${draw && !reduced ? "draw" : ""}">
       ${PLAN}${center}
       <div class="seats">${seats}</div>
-      <span class="poker-note br">${String(n).padStart(2, "0")} seats · ${blinds}</span>
     </div>`;
   }
   function animateSeats() {
@@ -476,7 +510,7 @@
     const pr = $("#presets");
     if (pr) pr.onclick = (e) => {
       const b = e.target.closest(".preset"); if (!b) return;
-      if (b.dataset.v === "custom") { customBuyOpen = true; render(); $("#customBuy")?.focus(); return; }
+      if (b.dataset.v === "custom") { customBuyOpen = true; render(); $("#customBuy")?.focus(); $("#customBuy")?.select(); return; }
       customBuyOpen = false;
       commit((s) => { s.buyIn = +b.dataset.v; s.buyInPicked = true; });
       chipBurst(app.querySelector(`.preset[data-v="${b.dataset.v}"]`), PRESET_COLORS[PRESETS.indexOf(+b.dataset.v)], 6);
@@ -486,10 +520,12 @@
     if (cfm) cfm.onsubmit = (e) => {
       e.preventDefault();
       const inp = $("#customBuy"), v = cents(parseFloat(inp.value));
-      if (!(v > 0)) return inp.focus();
-      customBuyOpen = false;
-      commit((s) => { s.buyIn = v; s.buyInPicked = true; });
-      toStep("blinds");
+      if (amountProblem(v, "a buy-in")) { toast(amountProblem(v, "a buy-in")); return inp.focus(); }
+      withAmount(v, "a buy-in", () => {
+        customBuyOpen = false;
+        commit((s) => { s.buyIn = v; s.buyInPicked = true; });
+        toStep("blinds");
+      });
     };
 
     const blp = $("#blinds");
@@ -506,8 +542,10 @@
       e.preventDefault();
       const sb = Math.round(parseFloat($("#sbIn").value) * 100);
       const bb = Math.round(parseFloat($("#bbIn").value) * 100);
-      if (!(sb > 0)) return $("#sbIn").focus();
-      if (!(bb >= sb)) return $("#bbIn").focus();
+      if (!(sb > 0)) { toast("Enter a small blind above $0"); return $("#sbIn").focus(); }
+      if (!(bb > 0)) { toast("Enter a big blind above $0"); return $("#bbIn").focus(); }
+      if (bb < sb) { toast("The small blind can't be bigger than the big blind"); return $("#sbIn").focus(); }
+      if (bb > 100000) { toast("Blinds that big aren't supported"); return $("#bbIn").focus(); }
       if (sb % 5 || bb % 5) return toast("Blinds need to be in 5¢ steps");
       commit((s) => { s.blinds = { sb, bb }; });
       toStep("chips");
@@ -559,6 +597,7 @@
       go((s) => {
         s.stage = "table";
         s.startedAt = Date.now();
+        if (s.blinds) s.chips = { key: `${s.blinds.sb}/${s.blinds.bb}`, set: chipSetFor(s.blinds) };
         s.players.forEach((p) => { if (!totalIn(p.id)) s.log.push({ id: uid(), pid: p.id, type: "buyin", amount: s.buyIn, ts: Date.now() }); });
       }).then(dealAnimation);
     };
@@ -610,10 +649,12 @@
               <div class="in">${money(tin)}<small>in</small></div>
               <div class="actions">
                 ${seated(p)
-                  ? `<button class="btn small" data-act="rebuy" data-pid="${p.id}">Rebuy</button>
-                     <button class="btn small" data-act="cashout" data-pid="${p.id}">Cash out</button>
-                     <button class="btn small danger" data-act="bust" data-pid="${p.id}">Bust</button>`
-                  : `<button class="btn small felt" data-act="rebuy" data-pid="${p.id}">Buy back in</button>`}
+                  ? `<button class="btn small" data-act="rebuy" data-pid="${p.id}" aria-label="Rebuy for ${esc(p.name)}">Rebuy</button>
+                     <button class="btn small" data-act="cashout" data-pid="${p.id}" aria-label="Cash out ${esc(p.name)}">Cash out</button>
+                     ${pendingBust && pendingBust.id === p.id
+                       ? `<button class="btn small danger confirm" data-act="bust" data-pid="${p.id}" aria-label="Confirm ${esc(p.name)} is out">Tap to confirm</button>`
+                       : `<button class="btn small danger" data-act="bust" data-pid="${p.id}" aria-label="Bust ${esc(p.name)}">Bust</button>`}`
+                  : `<button class="btn small felt" data-act="rebuy" data-pid="${p.id}" aria-label="Buy ${esc(p.name)} back in">Buy back in</button>`}
               </div>
             </div>`;
           }).join("")}
@@ -636,7 +677,7 @@
       const p = player(b.dataset.pid);
       if (b.dataset.act === "rebuy") openRebuy(p);
       else if (b.dataset.act === "cashout") openCashOut(p);
-      else bust(p);
+      else askBust(p);
     });
     $("#addLate").onclick = openAddLate;
     $("#changeBuy").onclick = openChangeBuy;
@@ -675,24 +716,50 @@
           <button class="x" data-del="${l.id}" aria-label="Delete entry">×</button></li>`;
       }).join("")}</ul></details>`;
   }
+  // a player's status is whatever their latest ledger entry says, so deleting an old entry
+  // never brings back someone who busted or left again later
+  function replayStatus(s, pid) {
+    const p = s.players.find((x) => x.id === pid);
+    if (!p) return;
+    let busted = false, left = false;
+    s.log.filter((l) => l.pid === pid).forEach((l) => {
+      if (l.type === "bust") { busted = true; left = false; }
+      else if (l.type === "cashout") { left = true; busted = false; }
+      else if (l.type === "buyin" || l.type === "rebuy") { busted = false; left = false; }
+    });
+    p.busted = busted; p.left = left; p.final = null;
+  }
   function bindLedger() {
     app.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => {
       const l = state.log.find((x) => x.id === b.dataset.del);
       const p = player(l.pid);
       commit((s) => {
         s.log = s.log.filter((x) => x.id !== l.id);
-        const pp = s.players.find((x) => x.id === l.pid);
-        if (pp && l.type === "bust") pp.busted = false;
-        if (pp && l.type === "cashout") pp.left = false;
+        replayStatus(s, l.pid);
       }, { undoable: true, msg: `Removed ${p ? p.name + "'s " : ""}entry` });
       const d = app.querySelector("details.card"); if (d) d.open = true;
     });
   }
 
+  // Bust asks for a second tap, so a double tap can't bust someone and then open their buy-back
+  let pendingBust = null, pendingTimer = 0;
+  function askBust(p) {
+    const now = Date.now();
+    if (pendingBust && pendingBust.id === p.id) {
+      if (now - pendingBust.at < 400) return;
+      pendingBust = null; clearTimeout(pendingTimer);
+      return bust(p);
+    }
+    pendingBust = { id: p.id, at: now };
+    clearTimeout(pendingTimer);
+    pendingTimer = setTimeout(() => { pendingBust = null; render(); }, 3000);
+    render();
+  }
   function bust(p) {
     const card = app.querySelector(`.pcard[data-pid="${p.id}"]`);
     commit((s) => {
-      s.players.find((x) => x.id === p.id).busted = true;
+      const pp = s.players.find((x) => x.id === p.id);
+      pp.busted = true; pp.final = null;
       s.log.push({ id: uid(), pid: p.id, type: "bust", amount: 0, ts: Date.now() });
     }, { undoable: true, msg: `${p.name} busted out` });
     bustAnimation(p, card);
@@ -702,57 +769,43 @@
     const wasBusted = p.busted || p.left;
     commit((s) => {
       const pp = s.players.find((x) => x.id === p.id);
-      pp.busted = false; pp.left = false;
+      pp.busted = false; pp.left = false; pp.final = null;
       s.log.push({ id: uid(), pid: p.id, type: "rebuy", amount, ts: Date.now() });
     }, { undoable: true, msg: `${p.name} rebought for ${money(amount)}` });
     rebuyAnimation(p, amount, wasBusted);
   }
 
   /* ----- settle ----- */
+  // Only counts from players still at the table are used: anyone who busted sits at $0 and anyone
+  // who left is counted by their cash-out, whatever was typed for them earlier. Maths is in cents.
   function computeSettle() {
-    // a player's result = chips at the end + whatever they cashed out early - everything they put in
     const rows = state.players.map((p) => ({
-      p, in: totalIn(p.id), cashed: totalOut(p.id),
-      final: p.final == null ? (seated(p) ? null : 0) : p.final,
+      p, key: p.id, inC: C(totalIn(p.id)), cashedC: C(totalOut(p.id)),
+      finalC: seated(p) ? (p.final == null ? null : C(p.final)) : 0,
+      counted: seated(p),
     }));
-    const missing = rows.filter((r) => r.final == null);
-    const tin = rows.reduce((a, r) => a + r.in, 0);
-    const tout = rows.reduce((a, r) => a + (r.final || 0) + r.cashed, 0);
-    const diff = cents(tout - tin);
-    rows.forEach((r) => { r.net = cents((r.final || 0) + r.cashed - r.in); });
-    return { rows, missing, tin, tout, diff };
+    const r = Settle.settle(rows, typeof state.settleAnyway === "number" ? state.settleAnyway : null);
+    rows.forEach((x) => { x.in = x.inC / 100; x.cashed = x.cashedC / 100; x.final = x.finalC == null ? null : x.finalC / 100; x.net = x.netC / 100; x.adj = x.adjC / 100; });
+    return { ...r, tin: r.tinC / 100, tout: r.toutC / 100, diff: r.diffC / 100 };
   }
-
-  function transfersFor(rows, diff) {
-    // optionally absorb a mismatch evenly so the books close
-    const adj = diff && state.settleAnyway ? diff / rows.length : 0;
-    const bal = rows.map((r) => ({ name: r.p.name, color: r.p.color, v: cents(r.net - adj) }));
-    const cred = bal.filter((b) => b.v > 0.004).sort((a, b) => b.v - a.v);
-    const debt = bal.filter((b) => b.v < -0.004).map((b) => ({ ...b, v: -b.v })).sort((a, b) => b.v - a.v);
-    const out = [];
-    let i = 0, j = 0;
-    while (i < debt.length && j < cred.length) {
-      const amt = cents(Math.min(debt[i].v, cred[j].v));
-      if (amt >= 0.01) out.push({ from: debt[i], to: cred[j], amt });
-      debt[i].v = cents(debt[i].v - amt);
-      cred[j].v = cents(cred[j].v - amt);
-      if (debt[i].v < 0.01) i++;
-      if (cred[j].v < 0.01) j++;
-    }
-    return out;
+  // the fewest e-transfers that square everyone up
+  function transfersFor(rows) {
+    const by = Object.fromEntries(rows.map((r) => [r.key, r.p]));
+    return Settle.transfers(rows.map((r) => ({ key: r.key, v: r.netC }))).map((t) => ({ from: by[t.from], to: by[t.to], amt: t.amtC / 100 }));
   }
 
   let boardShown = false;
+  let typing = null, typeTimer = 0;   // the stack being typed, kept as typed while the screen redraws
   function renderSettle() {
-    const { rows, missing, tin, tout, diff } = computeSettle();
-    const balanced = !missing.length && Math.abs(diff) < 0.01;
-    const canSettle = !missing.length && (balanced || state.settleAnyway);
-    const transfers = canSettle ? transfersFor(rows, diff) : [];
+    const { rows, missing, tin, tout, diff, diffC, balanced, canSettle, approved } = computeSettle();
+    const transfers = canSettle ? transfersFor(rows) : [];
     const ranked = [...rows].sort((a, b) => b.net - a.net);
     const maxAbs = Math.max(1, ...rows.map((r) => Math.abs(r.net)));
     const top = ranked[0], bottom = ranked[ranked.length - 1];
     const growBars = canSettle && !boardShown;   // the bars draw once, when the board first appears
     boardShown = canSettle;
+    const counted = rows.filter((r) => r.counted).length || rows.length;
+    const saved = !!state.savedId;
 
     let balHTML;
     if (missing.length) {
@@ -760,9 +813,10 @@
     } else if (balanced) {
       balHTML = `<div class="balance ok"><span class="icon">✓</span><div><strong>Everything balances</strong><span class="muted mono">${money(tout)} counted = ${money(tin)} bought in</span></div></div>`;
     } else {
+      const each = Math.abs(diffC) / counted / 100;
       balHTML = `<div class="balance off"><span class="icon">▲</span><div class="grow"><strong>Off by ${money(Math.abs(diff))}, ${diff > 0 ? "too many chips" : "chips missing"}</strong>
-        <span class="muted"><span class="mono">${money(tout)}</span> counted against <span class="mono">${money(tin)}</span> bought in. Recount, or split the difference evenly.</span>
-        <label class="row"><input type="checkbox" id="anyway" ${state.settleAnyway ? "checked" : ""}/> Settle anyway (${money(Math.abs(diff) / rows.length)} per player)</label></div></div>`;
+        <span class="muted"><span class="mono">${money(tout)}</span> counted against <span class="mono">${money(tin)}</span> bought in. Recount, or split the difference.</span>
+        <label class="row"><input type="checkbox" id="anyway" ${approved ? "checked" : ""}/> Settle anyway: ${diff > 0 ? "take" : "share"} ${money(Math.abs(diff))} ${diff > 0 ? "from" : "across"} the ${counted} counted stack${counted === 1 ? "" : "s"} (about ${money(each)} each, to the cent)</label></div></div>`;
     }
 
     app.innerHTML = `
@@ -773,10 +827,12 @@
         ${rows.map((r) => `
           <div class="stack-row">
             <div class="row">${avatar(r.p)}<div class="grow"><div class="who">${esc(r.p.name)}</div>
-              <div class="delta ${r.final == null ? "muted" : r.net > 0 ? "pos" : r.net < 0 ? "neg" : "muted"}" data-delta="${r.p.id}">in ${money(r.in)}${r.cashed && !r.p.left ? ` · cashed ${money(r.cashed)}` : ""}${r.final == null ? "" : ` · ${money(r.net, true)}`}</div></div></div>
+              <div class="delta ${r.final == null ? "muted" : r.net > 0 ? "pos" : r.net < 0 ? "neg" : "muted"}" data-delta="${r.p.id}">in ${money(r.in)}${r.cashed && !r.p.left ? ` · cashed ${money(r.cashed)}` : ""}${r.final == null ? "" : ` · ${money(r.net, true)}`}${r.adj ? ` <span class="muted">(${money(r.adj, true)} split)</span>` : ""}</div></div></div>
             ${r.p.left
               ? `<div class="left-amt"><span class="muted">cashed out</span><b>${money(r.cashed)}</b></div>`
-              : `<div class="money"><input class="input" type="number" inputmode="decimal" min="0" step="0.01" data-final="${r.p.id}" value="${r.final ?? ""}" placeholder="0" aria-label="${esc(r.p.name)}'s final stack" /></div>`}
+              : r.p.busted
+                ? `<div class="left-amt"><span class="muted">busted</span><b>$0</b></div>`
+                : `<div class="money"><input class="input" type="text" inputmode="decimal" autocomplete="off" data-final="${r.p.id}" value="${r.p.final ?? ""}" placeholder="0" aria-label="${esc(r.p.name)}'s final stack" /></div>`}
           </div>`).join("")}
       </div>`, 2)}
 
@@ -803,35 +859,69 @@
                 <span class="bar-wrap"><span class="bar-fill" style="${r.net >= 0 ? `left:50%;width:${w}%;background:var(--green);--o:left` : `right:50%;width:${w}%;background:var(--red);--o:right`}"></span></span>
                 <span class="val ${r.net > 0 ? "pos" : r.net < 0 ? "neg" : "muted"}">${money(r.net, true)}</span></li>`;
             }).join("")}</ul>
-          </div>`, 5)}` : ""}
+          </div>`, 5)}
 
-      ${sec("Save", canSettle
-        ? `<p class="muted lead-in">Keeps the date, blinds, players, buy-ins and results on this device, under Past games on the home screen.</p>
-           <button class="btn ${state.savedId ? "" : "primary"}" id="saveGame">${state.savedId ? "Saved · save changes" : "Save game"}</button>`
-        : `<p class="muted lead-in">Enter every stack and the game can be saved.</p>`, 6)}
+        ${sec("Save", saved
+          ? `<p class="muted lead-in">Saved under Past games on the home screen.</p><button class="btn small" id="saveGame2">Save changes</button>`
+          : `<p class="muted lead-in">Save keeps the date, blinds, players, buy-ins and results on this device, under Past games.</p>
+             <button class="btn small ghost danger" id="newGame2">Start a new game without saving</button>`, 6)}` : ""}
 
       <div class="bar"><div class="bar-inner">
         <button class="btn" id="back">Back to table</button>
-        <button class="btn primary grow" id="newGame">New game</button>
+        ${canSettle && !saved
+          ? `<button class="btn primary grow" id="saveGame">Save game</button>`
+          : `<button class="btn ${saved ? "primary" : ""} grow" id="newGame">New game</button>`}
       </div></div>`;
 
+    // a stack counts as it's typed; a bad one is explained when the field is left
+    const applyStack = (id, raw, live) => {
+      const txt = raw.replace(/[$,\s]/g, "");
+      let v = null;
+      if (txt !== "") {
+        v = Number(txt);
+        if (!Number.isFinite(v) || v < 0) { if (!live) toast("Enter a stack of $0 or more"); return; }
+        if (v > MAX_AMOUNT) { if (!live) toast(`${money(MAX_AMOUNT)} is the most chipme takes`); return; }
+        v = cents(v);
+      }
+      const p = player(id);
+      if (!p || p.final === v) return;
+      const wasBalanced = computeSettle().balanced;
+      const keep = live && typing && typing.id === id ? { ...typing } : null;   // the redraw blurs the field
+      commit((s) => { s.players.find((x) => x.id === id).final = v; });
+      if (keep) {
+        typing = keep;
+        const el = app.querySelector(`[data-final="${id}"]`);
+        if (el) { el.value = keep.raw; el.focus({ preventScroll: true }); try { el.setSelectionRange(keep.at, keep.at); } catch (_) {} }
+      }
+      if (!wasBalanced && computeSettle().balanced) confetti();
+    };
     app.querySelectorAll("[data-final]").forEach((inp) => {
-      inp.onchange = () => {
-        const v = inp.value === "" ? null : Math.max(0, cents(parseFloat(inp.value)));
-        const wasBalanced = balanced;
-        const id = inp.dataset.final;
-        commit((s) => { s.players.find((p) => p.id === id).final = Number.isFinite(v) ? v : null; });
-        const now = computeSettle();
-        if (!wasBalanced && !now.missing.length && Math.abs(now.diff) < 0.01) confetti();
-        const next = app.querySelector(`[data-final="${id}"]`)?.closest(".stack-row")?.nextElementSibling?.querySelector("input");
-        if (next && document.activeElement === document.body) next.focus();
+      const id = inp.dataset.final;
+      inp.oninput = () => {
+        typing = { id, raw: inp.value, at: inp.selectionStart };
+        clearTimeout(typeTimer);
+        typeTimer = setTimeout(() => applyStack(id, inp.value, true), 220);
+      };
+      inp.onchange = () => { clearTimeout(typeTimer); typing = null; applyStack(id, inp.value, false); };
+      inp.onblur = () => { setTimeout(() => { if (typing && typing.id === id && document.activeElement?.dataset?.final !== id) typing = null; }, 0); };
+      inp.onkeydown = (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        const all = [...app.querySelectorAll("[data-final]")], next = all[all.indexOf(inp) + 1];
+        inp.blur(); applyStack(id, inp.value, false);
+        if (next) app.querySelector(`[data-final="${next.dataset.final}"]`)?.focus();
       };
     });
-    const any = $("#anyway"); if (any) any.onchange = () => commit((s) => { s.settleAnyway = any.checked; });
+    // the field being typed in keeps its text and caret through the redraw
+    if (typing) {
+      const el = app.querySelector(`[data-final="${typing.id}"]`);
+      if (el) { el.value = typing.raw; el.focus({ preventScroll: true }); try { el.setSelectionRange(typing.at, typing.at); } catch (_) {} }
+    }
+    const any = $("#anyway"); if (any) any.onchange = () => commit((s) => { s.settleAnyway = any.checked ? diffC : false; });
     const cp = $("#copy"); if (cp) cp.onclick = () => copySummary(transfers, ranked);
-    const sg = $("#saveGame"); if (sg) sg.onclick = () => saveGame(rows, transfers, tin);
+    [$("#saveGame"), $("#saveGame2")].forEach((b) => { if (b) b.onclick = () => saveGame(rows, transfers, tin); });
     $("#back").onclick = () => go((s) => { s.stage = "table"; });
-    $("#newGame").onclick = confirmReset;
+    [$("#newGame"), $("#newGame2")].forEach((b) => { if (b) b.onclick = confirmReset; });
   }
 
   // one finished game, as kept under Past games
@@ -880,7 +970,7 @@
   function amountPicker(def) {
     const opts = [...new Set([def / 2, def, def * 1.5, def * 2].map(cents))].filter((v) => v > 0);
     return `<div class="quick">${opts.map((v) => `<button type="button" class="btn small ${v === def ? "primary" : ""}" data-q="${v}">${money(v)}</button>`).join("")}</div>
-      <div class="money"><input id="amt" class="input num" type="number" inputmode="decimal" min="0.01" step="0.01" value="${def}" /></div>
+      <div class="money"><input id="amt" class="input num" type="number" inputmode="decimal" min="0.01" max="${MAX_AMOUNT}" step="0.01" value="${def}" aria-label="Amount" /></div>
       <div id="bd">${breakdownHTML(def, 0, true)}</div>`;
   }
   function bindPicker(m) {
@@ -896,8 +986,18 @@
       m.querySelectorAll("[data-q]").forEach((x) => x.classList.toggle("primary", x === b));
       refresh();
     });
+    amt.addEventListener("focus", () => amt.select());
     amt.select();
     return amt;
+  }
+  // checks a typed amount; anything over $1,000 asks once before it goes through
+  function withAmount(v, what, then) {
+    const bad = amountProblem(v, what);
+    if (bad) { toast(bad); return; }
+    if (v <= BIG_AMOUNT) return then();
+    openModal(`<h3>${money(v)}?</h3><p class="muted">That's a big amount. Check it's right before it goes in the ledger.</p>
+      <div class="row" style="margin-top:14px"><button class="btn" data-close>Fix it</button><button class="btn primary grow" id="bigOk">Yes, ${money(v)}</button></div>`,
+      (m) => { $("#bigOk", m).onclick = () => { modal.close(); then(); }; });
   }
 
   function openRebuy(p) {
@@ -912,9 +1012,9 @@
       $("#f", m).onsubmit = (e) => {
         e.preventDefault();
         const v = cents(parseFloat(amt.value));
-        if (!(v > 0)) return amt.focus();
+        if (amountProblem(v, "a rebuy")) { toast(amountProblem(v, "a rebuy")); return amt.focus(); }
         modal.close();
-        rebuy(player(p.id), v);
+        withAmount(v, "a rebuy", () => rebuy(player(p.id), v));
       };
     });
   }
@@ -922,7 +1022,7 @@
   // One player leaves with their chips while everyone else keeps playing. Their result is fixed
   // now; who pays whom is still worked out with everyone at the end.
   function openCashOut(p) {
-    const tin = totalIn(p.id);
+    const tin = totalIn(p.id), before = totalOut(p.id);   // money they already took home earlier
     openModal(`
       <form id="f">
         <h3>Cash out · ${esc(p.name)}</h3>
@@ -935,24 +1035,25 @@
       const amt = $("#amt", m);
       const show = () => {
         const v = cents(parseFloat(amt.value));
-        if (!(v >= 0) || amt.value === "") { $("#advice", m).innerHTML = `Bought in for <b>${money(tin)}</b>.`; return; }
-        const net = cents(v - tin);
+        const was = `Bought in for <b>${money(tin)}</b>${before ? `, took <b>${money(before)}</b> earlier` : ""}`;
+        if (!(v >= 0) || amt.value === "") { $("#advice", m).innerHTML = `${was}.`; return; }
+        const net = cents(v + before - tin);
         $("#advice", m).innerHTML = net === 0
-          ? `Bought in for <b>${money(tin)}</b>: they leave even.`
-          : `Bought in for <b>${money(tin)}</b>: they leave <b class="${net > 0 ? "pos" : "neg"}">${money(net, true)}</b>. They're settled up with everyone at the end of the night.`;
+          ? `${was}: they leave even.`
+          : `${was}: they leave <b class="${net > 0 ? "pos" : "neg"}">${money(net, true)}</b>. They're settled up with everyone at the end of the night.`;
       };
       amt.addEventListener("input", show); show(); amt.focus();
       $("#f", m).onsubmit = (e) => {
         e.preventDefault();
         const v = cents(parseFloat(amt.value));
-        if (!(v >= 0) || amt.value === "") return amt.focus();
+        if (amt.value === "" || !(v >= 0)) { toast("Enter the stack they're leaving with, $0 or more"); return amt.focus(); }
         if (v > inPlay()) return toast(`Only ${money(inPlay())} is in play`);
         modal.close();
         commit((s) => {
           const pp = s.players.find((x) => x.id === p.id);
-          pp.left = true; pp.busted = false;
+          pp.left = true; pp.busted = false; pp.final = null;
           s.log.push({ id: uid(), pid: p.id, type: "cashout", amount: v, ts: Date.now() });
-        }, { undoable: true, msg: `${p.name} cashed out ${money(v)} (${money(v - tin, true)})` });
+        }, { undoable: true, msg: `${p.name} cashed out ${money(v)} (${money(v + before - tin, true)})` });
         cashOutAnimation(p, v);
       };
     });
@@ -1003,17 +1104,17 @@
         const v = cents(parseFloat(amt.value));
         if (!name) return $("#nm", m).focus();
         if (state.players.some((x) => x.name.toLowerCase() === name.toLowerCase())) return toast(`${name} is already at the table`);
-        if (!(v > 0)) return amt.focus();
+        if (amountProblem(v, "a buy-in")) { toast(amountProblem(v, "a buy-in")); return amt.focus(); }
         const afterId = $("#after", m).value, bbId = $("#bbOn", m).value;
         modal.close();
         const p = newPlayer(name);
-        commit((s) => {
+        withAmount(v, "a buy-in", () => { commit((s) => {
           const at = s.players.findIndex((x) => x.id === afterId);
           s.players.splice(at < 0 ? s.players.length : at + 1, 0, p);
           s.bbPid = bbId;
           s.log.push({ id: uid(), pid: p.id, type: "buyin", amount: v, ts: Date.now() });
         }, { undoable: true, msg: `${name} bought in for ${money(v)}` });
-        buyInAnimation(p, v);
+        buyInAnimation(p, v); });
       };
     });
   }
@@ -1030,16 +1131,18 @@
       $("#f", m).onsubmit = (e) => {
         e.preventDefault();
         const v = cents(parseFloat(amt.value));
-        if (!(v > 0)) return amt.focus();
+        if (amountProblem(v, "a buy-in")) { toast(amountProblem(v, "a buy-in")); return amt.focus(); }
         modal.close();
-        commit((s) => { s.buyIn = v; }, { msg: `Buy-in is now ${money(v)}` });
+        withAmount(v, "a buy-in", () => commit((s) => { s.buyIn = v; }, { msg: `Buy-in is now ${money(v)}` }));
       };
     });
   }
 
   function confirmReset() {
+    const unsaved = state.log.length > 0 && !state.savedId;
     openModal(`
       <h3>Start a new game?</h3>
+      ${unsaved ? `<p class="warn-line">This game isn't saved. Its buy-ins and results will be gone${state.stage === "settle" ? ": save it first from the cash-out screen" : ""}.</p>` : ""}
       <p class="muted">This clears the current ledger. Your player list stays so you can run it back.</p>
       <div class="row" style="margin-top:14px"><button class="btn" data-close>Cancel</button><button class="btn danger" id="wipe">Clear all</button><button class="btn primary grow" id="keep">Keep players</button></div>`, (m) => {
       const reset = (keep) => {
@@ -1048,7 +1151,7 @@
         go((s) => {
           const players = keep ? s.players.map((p) => ({ ...p, busted: false, left: false, final: null })) : [];
           Object.assign(s, fresh(), { buyIn: s.buyIn, blinds: s.blinds, buyInPicked: s.buyInPicked, players, setupStep: "players" });
-        }, { undoable: true, msg: keep ? "New game, same players" : "Table cleared" });
+        }, { undoable: true, msg: keep ? "New game, same players" : "Table cleared", ms: 12000 });
       };
       $("#keep", m).onclick = () => reset(true);
       $("#wipe", m).onclick = () => reset(false);
@@ -1058,19 +1161,27 @@
   /* ---------------- toast ---------------- */
   let toastTimer;
   // undo: true rolls the game back to before the last change; a function undoes something else
-  function toast(msg, undo = false) {
+  function hideToast() {
+    const t = $("#toast");
+    clearTimeout(toastTimer);
+    t.classList.remove("show");
+    t.inert = true;
+    setTimeout(() => { if (!t.classList.contains("show")) t.innerHTML = ""; }, 400);
+  }
+  function toast(msg, undo = false, ms) {
     const t = $("#toast");
     t.innerHTML = `<span>${esc(msg)}</span>${undo ? `<button id="undo">Undo</button>` : ""}`;
+    t.inert = false;
     t.classList.add("show");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.remove("show"), undo ? 5000 : 2200);
+    toastTimer = setTimeout(() => { if (undo === true) undoSnap = null; hideToast(); }, ms || (undo ? 6000 : 2400));
     const u = $("#undo");
-    if (u && typeof undo === "function") u.onclick = () => { undo(); t.classList.remove("show"); };
+    if (u && typeof undo === "function") u.onclick = () => { undo(); hideToast(); };
     else if (u) u.onclick = () => {
       if (!undoSnap) return;
       state = JSON.parse(undoSnap); undoSnap = null;
       save(); render();
-      t.classList.remove("show");
+      hideToast();
     };
   }
 

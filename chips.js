@@ -13,9 +13,21 @@
   const DENOM_COST = 4;      // each extra value makes the set harder to read (guides favour 4-5 values)
 
   // cheapest exact way to make `r` cents out of `set`, given a cost per chip; null if impossible
+  // past this many smallest-chip units the exact search gets slow, so a big stack is filled
+  // greedily from the top instead (fast, and still exact to the chip)
+  const EXACT_LIMIT = 6000;
+  function greedy(set, r, cost, caps) {
+    const n = set.map(() => 0);
+    for (let i = set.length - 1; i >= 0 && r > 0; i--) {
+      const k = Math.min(Math.floor(r / set[i]), caps ? Math.max(0, caps[i]) : Infinity);
+      n[i] = k; r -= k * set[i];
+    }
+    return r ? null : { n, cost: n.reduce((a, x, i) => a + x * cost[i], 0) };
+  }
   function fill(set, r, cost) {
     const u = set[0];
     if (r % u) return null;
+    if (r / u > EXACT_LIMIT) return greedy(set, r, cost);
     const N = r / u, best = new Float64Array(N + 1).fill(Infinity), pick = new Int8Array(N + 1).fill(-1);
     best[0] = 0;
     for (let v = 1; v <= N; v++)
@@ -33,6 +45,7 @@
   function fillCapped(set, r, cost, caps) {
     const u = set[0];
     if (r % u) return null;
+    if (r / u > EXACT_LIMIT) return greedy(set, r, cost, caps);
     const N = r / u, items = [];
     set.forEach((d, i) => {
       for (let left = Math.max(0, caps[i]), k = 1; left > 0; k *= 2) {

@@ -6,7 +6,7 @@
   --felt: #e7e1d7;
   --ink: #2a2230;
   --ink-2: #4a4150;
-  --muted: #7a7180;
+  --muted: #635a69;
   --line: rgba(42, 34, 48, .13);
   --line-2: rgba(42, 34, 48, .3);
   --red: #b5332e;
@@ -564,3 +564,45 @@ details.card.game[open] { animation: none; }
   .presets.big { gap: 12px; }
   .presets.big .chip { --size: 70px !important; font-size: 25px; }
 }
+
+/* ---------- the table: deep green felt inside a black leather rail ---------- */
+.plan { aspect-ratio: 1000 / 560; filter: drop-shadow(0 18px 26px rgba(10, 8, 6, .32)); }
+.plan .rail-o { fill: url(#railG); stroke: #050505; stroke-width: 1.5; }
+.plan .rail-sheen { fill: none; stroke: rgba(255, 255, 255, .10); stroke-width: 2; }
+.plan .rail-stitch { fill: none; stroke: rgba(236, 222, 196, .30); stroke-width: 1.2; stroke-dasharray: 7 6; }
+.plan .rail-i { fill: url(#feltG); stroke: rgba(0, 0, 0, .55); stroke-width: 4; }
+.plan .bet { stroke: rgba(255, 255, 255, .34); }
+.plan .tick { stroke: rgba(255, 255, 255, .28); }
+.poker.draw .plan .rail-sheen, .poker.draw .plan .rail-stitch { opacity: 0; animation: fadeIn .9s var(--ease) .9s forwards; }
+.felt-logo { color: #e3c27a; text-shadow: 0 1px 0 rgba(0, 0, 0, .35); }
+.felt-label { color: rgba(255, 255, 255, .7); }
+.seat-tag { box-shadow: 0 2px 6px rgba(0, 0, 0, .18); }
+
+/* eight or more on a phone: a taller table and smaller seats so names don't collide */
+@media (max-width: 560px) {
+  .poker.crowd { margin-top: 56px; margin-bottom: 62px; }
+  .poker.crowd .plan { aspect-ratio: 1.12; }
+  .poker.crowd .plan rect { vector-effect: non-scaling-stroke; }
+  .poker.crowd .seat .avatar { width: 30px; height: 30px; font-size: 10px; }
+  .poker.crowd .seat-tag { max-width: 62px; padding: 1px 5px; }
+  .poker.crowd .seat-tag b { font-size: 11px; }
+  .poker.crowd .seat-tag em { font-size: 10px; }
+  .poker.crowd .cluster { transform: scale(.5); }
+}
+
+/* banners sit on a backdrop so they never land on bare seats or buttons */
+.fx-banner { font-size: clamp(30px, 7.5vw, 60px); }
+.fx-banner span { background: color-mix(in srgb, var(--bg) 90%, transparent); padding: .02em .32em .08em; border-radius: 14px; box-shadow: 0 10px 30px rgba(20, 14, 26, .16); }
+
+/* bust asks for a second tap */
+.btn.small.danger.confirm { background: var(--red); color: #fff; border-color: var(--red); }
+.warn-line { color: var(--red); margin: 6px 0 0; font-size: 14px; }
+
+/* bigger targets for fingers; keyboard hints only where there's a keyboard */
+.seat-x { width: 30px; height: 30px; line-height: 28px; top: -12px; right: -16px; font-size: 15px; }
+@media (pointer: coarse) {
+  .btn.small { height: 44px; }
+  .x { min-width: 44px; min-height: 44px; }
+  .crumb { min-height: 44px; }
+}
+@media (hover: none) { kbd { display: none !important; } }
