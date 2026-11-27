@@ -1244,7 +1244,7 @@
   }
 
   // BALANCED: no burst. The balance card fills with a slow green wash, a handful of chips drift
-  // up from its tick and fade, and the word rises and settles at an unhurried pace.
+  // up from its tick and fade.
   function confetti() {
     if (reduced) return;
     requestAnimationFrame(() => {
@@ -1261,7 +1261,6 @@
           { transform: `translate(${dx}px,${-rise}px) scale(.8)`, opacity: 0 },
         ], { duration: rand(2600, 3300), delay: 300 + i * 120, easing: "cubic-bezier(.22,1,.36,1)" });
       }
-      banner("Balanced", "var(--green)", 3200);
     });
   }
 
