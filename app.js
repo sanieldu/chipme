@@ -10,19 +10,22 @@
   const PRESET_COLORS = ["#1f8fd6", "#1e9b4a", "#f07a2c"];   // $20 blue, $25 green, $50 orange
   // blind levels -> the chip values a home game would use for them (cents)
   const BLINDS = [
-    { sb: 10, bb: 20, chips: [10, 50, 100, 500] },
-    { sb: 25, bb: 50, chips: [25, 100, 500, 2500] },
-    { sb: 50, bb: 100, chips: [50, 100, 500, 2500] },
-    { sb: 100, bb: 200, chips: [100, 500, 2500, 10000] },
-    { sb: 200, bb: 500, chips: [100, 500, 2500, 10000] },
+    { sb: 10, bb: 20, chips: [10, 50, 100, 200, 500] },
+    { sb: 25, bb: 50, chips: [25, 100, 200, 500, 2500] },
+    { sb: 50, bb: 100, chips: [50, 100, 200, 500, 2500] },
+    { sb: 100, bb: 200, chips: [100, 200, 500, 2500, 10000] },
+    { sb: 200, bb: 500, chips: [100, 200, 500, 2500, 10000] },
   ];
   const LADDER = [5, 10, 25, 50, 100, 200, 500, 1000, 2500, 10000, 50000];
+  // chip colours by rank in the set; a $2 chip is always blue
   const RANK = [
     { name: "white", color: "#f1ede3" },
     { name: "red", color: "#d63a3a" },
     { name: "green", color: "#1e9b4a" },
     { name: "black", color: "#232325" },
+    { name: "yellow", color: "#f2c230" },
   ];
+  const TWO = { name: "blue", color: "#2b6cb8" };
   const AV_COLORS = ["#b5332e", "#33518f", "#2e7a4f", "#a07a32", "#c0622b", "#2c7f86", "#a4466e", "#6f6a5e"];
 
   const $ = (s, el = document) => el.querySelector(s);
@@ -90,7 +93,8 @@
   function chipSet(b) {
     const preset = BLINDS.find((x) => x.sb === b.sb && x.bb === b.bb);
     if (preset) return preset.chips;
-    // custom blinds: smallest chip divides both blinds, then each chip >= 4x the last
+    // custom blinds: smallest chip divides both blinds, then each chip >= 4x the last,
+    // plus a $2 chip between $1 and $5 so fewer $1 chips are needed
     const d0 = [...LADDER].reverse().find((v) => b.sb % v === 0 && b.bb % v === 0) || 5;
     const set = [d0];
     while (set.length < 4) {
@@ -98,9 +102,17 @@
       if (!next) break;
       set.push(next);
     }
+    if (set.includes(100) && set.includes(500) && !set.includes(200)) set.splice(set.indexOf(500), 0, 200);
     return set;
   }
+  function chipLook(set) {
+    let r = 0;
+    return set.map((c) => (c === 200 ? TWO : RANK[Math.min(r++, RANK.length - 1)]));
+  }
 
+  // All in cents. Small chips first (about 10 big blinds, for posting and betting), then
+  // enough of each middle chip to make change for the next one up (two of the next chip's worth),
+  // then the rest in the biggest chips that fit, so stacks hold as few small chips as they can.
   function chipBreakdown(amount, blinds) {
     let total = Math.round(amount * 100);
     if (!(total > 0) || !blinds) return null;
@@ -110,19 +122,18 @@
     const n = d.map(() => 0);
     n[0] = Math.floor(Math.min(blinds.bb * 10, total * 0.25) / d[0]);
     let rem = total - n[0] * d[0];
-    if (d[2]) {
-      const target = Math.min(rem, Math.round(total * 0.3), d[1] * 20);
-      n[2] = Math.max(0, Math.floor((rem - target) / d[2]));
-      rem -= n[2] * d[2];
+    for (let i = 1; i < d.length - 1 && rem > 0; i++) {
+      const want = Math.floor((2 * d[i + 1]) / d[i]);
+      n[i] = Math.min(want, Math.floor(rem / d[i]));
+      rem -= n[i] * d[i];
     }
-    if (d[1]) { n[1] = Math.floor(rem / d[1]); rem -= n[1] * d[1]; }
+    for (let i = d.length - 1; i >= 1 && rem > 0; i--) {
+      const k = Math.floor(rem / d[i]);
+      n[i] += k; rem -= k * d[i];
+    }
     n[0] += rem / d[0];
-    if (d[3] && n[2] > 15 && d[3] % d[2] === 0) {
-      const k = d[3] / d[2];
-      n[3] = Math.floor((n[2] - 10) / k);
-      n[2] -= n[3] * k;
-    }
-    const rows = d.map((c, i) => ({ cents: c, n: n[i], ...RANK[i] })).filter((r) => r.n > 0).reverse();
+    const look = chipLook(d);
+    const rows = d.map((c, i) => ({ cents: c, n: n[i], ...look[i] })).filter((r) => r.n > 0).reverse();
     return { rows, total: rows.reduce((a, r) => a + r.n, 0), leftover: leftover / 100, bbs: Math.floor(total / blinds.bb) };
   }
 
@@ -161,8 +172,8 @@
     else renderSettle();
   }
   // moving between screens cross-fades (View Transitions where the browser has them)
-  function go(mutator) {
-    const run = () => { commit(mutator); scrollTo(0, 0); };
+  function go(mutator, opts) {
+    const run = () => { commit(mutator, opts); scrollTo(0, 0); };
     if (document.startViewTransition && !reduced) return document.startViewTransition(run).finished.catch(() => {});
     run();
     return Promise.resolve();
@@ -175,13 +186,30 @@
   }
 
   // a clay chip seen from above: edge spots, darker inlay, gold value
-  function chipHTML(color, label = "", size = 40, attrs = "") {
+  function chipHTML(color, label = "", size = 40, attrs = "", style = "") {
     const tone = color === "#f1ede3" ? " white" : color === "#f2c230" ? " yellow" : "";
-    return `<span class="chip${tone}" style="--c:${color};--size:${size}px" ${attrs}><span>${label}</span></span>`;
+    return `<span class="chip${tone}" style="--c:${color};--size:${size}px;${style}" ${attrs}><span>${label}</span></span>`;
   }
   // a chip stack seen from the side
   function stackHTML(n, color) {
     return `<span class="side-stack" style="--c:${color}">${"<i></i>".repeat(Math.max(1, n))}</span>`;
+  }
+  // a player's chips on the felt: one round stack per denomination, overlapping like a venn
+  // diagram, seen at an angle (flattened faces, striped edges built from stacked shadows)
+  const VENN = { 1: [[0, 0]], 2: [[-10, 1], [10, -1]], 3: [[0, -6], [12, 4], [-12, 4]], 4: [[0, -8], [13, 0], [-13, 0], [0, 8]] };
+  function clusterHTML(amount, fallbackColor) {
+    const b = state.blinds && chipBreakdown(amount, state.blinds);
+    const rows = b ? b.rows.slice(0, 4) : [{ color: fallbackColor, n: Math.max(4, Math.round((amount / state.buyIn) * 8)) }];
+    const spots = VENN[rows.length];
+    const stacks = rows.map((r, k) => {
+      const layers = Math.min(7, Math.max(1, Math.ceil(r.n / 4)));
+      const edge = [];
+      for (let l = 1; l <= layers; l++) edge.push(`0 ${l * 2.4}px 0 ${l % 2 ? `color-mix(in srgb, ${r.color} 72%, #000)` : `color-mix(in srgb, ${r.color} 55%, #fff)`}`);
+      edge.push(`0 ${layers * 2.4 + 3}px 5px rgba(0,0,0,.28)`);
+      const [x, y] = spots[k];
+      return { y, html: `<span class="s3" style="--x:${x}px;--y:${y - layers * 1.3}px">${chipHTML(r.color, "", 28, "", `box-shadow:${edge.join(",")}`)}</span>` };
+    }).sort((a, c) => a.y - c.y);
+    return `<span class="cluster">${stacks.map((s) => s.html).join("")}</span>`;
   }
 
   /* ----- the poker table: one seat per player, spaced evenly around the rail ----- */
@@ -199,10 +227,10 @@
     const seats = ps.map((p, i) => {
       const a = Math.PI / 2 + (i * 2 * Math.PI) / Math.max(n, 1);
       const x = 50 + 50 * Math.cos(a), y = 50 + 50 * Math.sin(a);
-      const sx = 50 + 32 * Math.cos(a), sy = 50 + 21 * Math.sin(a);   // stack spot on the felt
+      const sx = 50 + 32 * Math.cos(a), sy = 48 + 19 * Math.sin(a);   // stack spot on the felt
       const tin = totalIn(p.id);
       const stack = mode === "table" && tin > 0 && !p.busted
-        ? `<div class="felt-stack" style="left:${sx}%;top:${sy}%">${stackHTML(Math.min(7, Math.max(2, Math.round((tin / state.buyIn) * 3))), CHIP_COLORS[i % 7])}</div>` : "";
+        ? `<div class="felt-stack" style="left:${sx}%;top:${sy}%">${clusterHTML(tin, CHIP_COLORS[i % 7])}</div>` : "";
       const code = `S-${String(i + 1).padStart(2, "0")}`;
       return `${stack}<div class="seat ${p.busted ? "out" : ""}" data-seat="${p.id}" data-x="${x}" data-y="${y}" style="left:${x}%;top:${y}%">
           ${avatar(p)}
@@ -230,7 +258,7 @@
       if (reduced) return;
       if (!prev) el.classList.add("pop");
       else if (prev[0] !== x || prev[1] !== y)
-        el.animate([{ left: prev[0] + "%", top: prev[1] + "%" }, { left: x + "%", top: y + "%" }], { duration: 600, easing: "cubic-bezier(.22,1,.36,1)" });
+        el.animate([{ left: prev[0] + "%", top: prev[1] + "%" }, { left: x + "%", top: y + "%" }], { duration: 800, easing: "cubic-bezier(.22,1,.36,1)" });
     });
     seatPos = next;
   }
@@ -404,7 +432,7 @@
     if (!el) return;
     cancelAnimationFrame(potRaf);
     if (reduced || from == null || from === to) { el.textContent = money(to); return; }
-    const t0 = performance.now(), dur = 700;
+    const t0 = performance.now(), dur = 950;
     const step = (t) => {
       const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
       el.textContent = money(Math.round((from + (to - from) * e) * 100) / 100);
@@ -636,15 +664,44 @@
     });
   }
 
+  // Where does the big blind fall for someone joining mid-game? Seats run clockwise in list order
+  // and the big blind moves one seat clockwise each hand.
+  function bbAdvice(name, afterId, bbId) {
+    const who = esc(name || "The new player");
+    const order = [];
+    state.players.forEach((p) => { if (!p.busted) order.push(p.id); if (p.id === afterId) order.push("NEW"); });
+    if (!order.includes("NEW")) order.push("NEW");
+    const len = order.length, bb = order.indexOf(bbId), nw = order.indexOf("NEW");
+    const bbAmt = state.blinds ? blindLabel(state.blinds.bb) : "one big blind";
+    if (bb < 0 || len < 3) return `${who} can be dealt in next hand.`;
+    const dist = (nw - bb + len) % len;   // seats clockwise from the big blind to the new seat
+    if (dist === 1) return `<b>No premium.</b> ${who} sits right after the big blind, so the blind reaches them next hand: they just post the normal ${bbAmt} big blind and play.`;
+    if (dist === len - 1) return `<b>Wait for the button.</b> ${who} sits just before the big blind, which puts them between the button and the small blind next hand. Most house rules deal them in once the button passes, or let them post ${bbAmt} to play now.`;
+    return `<b>Premium of ${bbAmt}.</b> To play next hand ${who} posts a big blind (${bbAmt}) on top of the blinds. Or they wait ${dist - 1} hand${dist - 1 === 1 ? "" : "s"} for the big blind to reach them and pay nothing extra.`;
+  }
+
   function openAddLate() {
+    const active = state.players.filter((p) => !p.busted);
+    const last = state.players[state.players.length - 1];
+    const bbDefault = active.some((p) => p.id === state.bbPid) ? state.bbPid : active[0]?.id;
+    const opts = (list, sel) => list.map((p) => `<option value="${p.id}" ${p.id === sel ? "selected" : ""}>${esc(p.name)}</option>`).join("");
     openModal(`
       <form id="f">
         <h3>Pull up a chair</h3>
-        <input id="nm" class="input" placeholder="Name" maxlength="24" style="margin-top:12px" autocomplete="off" />
+        <label class="field-lbl" for="nm">Name</label>
+        <input id="nm" class="input" placeholder="Name" maxlength="24" autocomplete="off" />
+        <div class="field-pair">
+          <div><label class="field-lbl" for="after">Sits after</label><select id="after" class="input">${opts(state.players, last?.id)}</select></div>
+          <div><label class="field-lbl" for="bbOn">Big blind is on</label><select id="bbOn" class="input">${opts(active, bbDefault)}</select></div>
+        </div>
+        <p class="advice" id="advice"></p>
         ${amountPicker(state.buyIn)}
         <div class="row" style="margin-top:14px"><button type="button" class="btn" data-close>Cancel</button><button class="btn felt grow">Buy in</button></div>
       </form>`, (m) => {
       const amt = bindPicker(m);
+      const advise = () => { $("#advice", m).innerHTML = bbAdvice($("#nm", m).value.trim(), $("#after", m).value, $("#bbOn", m).value); };
+      ["#nm", "#after", "#bbOn"].forEach((s) => $(s, m).addEventListener("input", advise));
+      advise();
       $("#nm", m).focus();
       $("#f", m).onsubmit = (e) => {
         e.preventDefault();
@@ -653,10 +710,13 @@
         if (!name) return $("#nm", m).focus();
         if (state.players.some((x) => x.name.toLowerCase() === name.toLowerCase())) return toast(`${name} is already at the table`);
         if (!(v > 0)) return amt.focus();
+        const afterId = $("#after", m).value, bbId = $("#bbOn", m).value;
         modal.close();
         const p = newPlayer(name);
         commit((s) => {
-          s.players.push(p);
+          const at = s.players.findIndex((x) => x.id === afterId);
+          s.players.splice(at < 0 ? s.players.length : at + 1, 0, p);
+          s.bbPid = bbId;
           s.log.push({ id: uid(), pid: p.id, type: "buyin", amount: v, ts: Date.now() });
         }, { undoable: true, msg: `${name} bought in for ${money(v)}` });
         buyInAnimation(p, v);
@@ -688,15 +748,15 @@
       <h3>Start a new game?</h3>
       <p class="muted">This clears the current ledger. Your player list stays so you can run it back.</p>
       <div class="row" style="margin-top:14px"><button class="btn" data-close>Cancel</button><button class="btn danger" id="wipe">Clear all</button><button class="btn primary grow" id="keep">Keep players</button></div>`, (m) => {
-      const go = (keep) => {
+      const reset = (keep) => {
         modal.close();
         go((s) => {
           const players = keep ? s.players.map((p) => ({ ...p, busted: false, final: null })) : [];
-          Object.assign(s, fresh(), { buyIn: s.buyIn, players });
-        }, { undoable: true, msg: "New game" });
+          Object.assign(s, fresh(), { buyIn: s.buyIn, blinds: s.blinds, players });
+        }, { undoable: true, msg: keep ? "New game, same players" : "Table cleared" });
       };
-      $("#keep", m).onclick = () => go(true);
-      $("#wipe", m).onclick = () => go(false);
+      $("#keep", m).onclick = () => reset(true);
+      $("#wipe", m).onclick = () => reset(false);
     });
   }
 
@@ -756,9 +816,9 @@
         { transform: "translate(0,0) scale(.5)", opacity: 0 },
         { transform: `translate(${mx}px,${my}px) scale(.9)`, opacity: 1, offset: .45 },
         { transform: `translate(${dx}px,${dy}px) scale(.6)`, opacity: 0 },
-      ], { duration: rand(750, 950), delay: i * 50, easing: "cubic-bezier(.65,0,.35,1)" });
+      ], { duration: rand(1000, 1250), delay: i * 70, easing: "cubic-bezier(.65,0,.35,1)" });
     }
-    setTimeout(bumpPot, reduced ? 0 : 700);
+    setTimeout(bumpPot, reduced ? 0 : 950);
   }
 
   function floatText(text, at, color) {
@@ -767,7 +827,7 @@
       { transform: "translate(-50%,-30%)", opacity: 0 },
       { transform: "translate(-50%,-110%)", opacity: 1, offset: .3 },
       { transform: "translate(-50%,-190%)", opacity: 0 },
-    ], { duration: 1300, easing: "cubic-bezier(.22,1,.36,1)" });
+    ], { duration: 1700, easing: "cubic-bezier(.22,1,.36,1)" });
   }
 
   function chipBurst(fromEl, color, n = 8) {
@@ -780,7 +840,7 @@
         { transform: "translate(0,0) scale(.4)", opacity: 0 },
         { transform: `translate(${Math.cos(ang) * d}px,${Math.sin(ang) * d}px) scale(.75)`, opacity: 1, offset: .55 },
         { transform: `translate(${Math.cos(ang) * d * 1.15}px,${Math.sin(ang) * d * 1.15}px) scale(.6)`, opacity: 0 },
-      ], { duration: 700, easing: "cubic-bezier(.22,1,.36,1)" });
+      ], { duration: 950, easing: "cubic-bezier(.22,1,.36,1)" });
     }
   }
 
@@ -793,7 +853,7 @@
       { transform: "translateY(0)", offset: .28 },
       { transform: "translateY(0)", offset: .74 },
       { transform: "translateY(-110%)" },
-    ], { duration: 1500, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards" }).onfinish = () => el.remove();
+    ], { duration: 1950, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards" }).onfinish = () => el.remove();
   }
 
   // BUY-IN: chips leave every seat for the pot
@@ -805,7 +865,7 @@
           const seat = app.querySelector(`.seat[data-seat="${p.id}"] .avatar`);
           app.querySelector(`.pcard[data-pid="${p.id}"]`)?.classList.add("flash-in");
           chipsToPot(seat, 3, CHIP_COLORS[i % CHIP_COLORS.length]);
-        }, 200 + i * 110);
+        }, 260 + i * 150);
       });
     });
   }
@@ -828,7 +888,7 @@
       const seat = app.querySelector(`.seat[data-seat="${p.id}"] .avatar`);
       floatText(`+${money(amount)}`, center(seat), "var(--green)");
       chipBurst(seat, null, 8);
-      setTimeout(() => chipsToPot(seat, Math.min(10, 3 + Math.round(amount / state.buyIn) * 2)), 200);
+      setTimeout(() => chipsToPot(seat, Math.min(10, 3 + Math.round(amount / state.buyIn) * 2)), 280);
       banner(wasBusted ? "Back from the dead" : amount > state.buyIn ? "Reloading" : "Rebuy");
     });
   }
@@ -857,11 +917,11 @@
         path.setAttribute("stroke", "var(--red)"); path.setAttribute("stroke-width", "1.2");
         path.setAttribute("pathLength", "1");
         path.style.strokeDasharray = 1; path.style.strokeDashoffset = 1;
-        path.animate([{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }], { duration: 420, delay: i * 25, fill: "forwards", easing: "cubic-bezier(.22,1,.36,1)" });
+        path.animate([{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }], { duration: 560, delay: i * 35, fill: "forwards", easing: "cubic-bezier(.22,1,.36,1)" });
         svg.appendChild(path);
       }
       fx.appendChild(svg);
-      svg.animate([{ opacity: 1 }, { opacity: 1, offset: .55 }, { opacity: 0 }], { duration: 1400, fill: "forwards" }).onfinish = () => svg.remove();
+      svg.animate([{ opacity: 1 }, { opacity: 1, offset: .55 }, { opacity: 0 }], { duration: 1800, fill: "forwards" }).onfinish = () => svg.remove();
       banner(`${p.name} is out`, "var(--red)");
     });
   }
@@ -877,7 +937,7 @@
         { transform: "translate(0,0) scale(.5)", opacity: 0 },
         { transform: `translate(${dx}px,${dy}px) scale(1)`, opacity: 1, offset: .45 },
         { transform: `translate(${dx * 1.1}px,${dy + 260}px) scale(.8)`, opacity: 0 },
-      ], { duration: rand(1300, 1800), delay: rand(0, 120), easing: "cubic-bezier(.22,1,.36,1)" });
+      ], { duration: rand(1700, 2300), delay: rand(0, 160), easing: "cubic-bezier(.22,1,.36,1)" });
     }
     banner("Balanced", "var(--green)");
   }

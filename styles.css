@@ -121,7 +121,7 @@ h2 .sym, .sym { font-variation-settings: "MONO" 1; }
   height: 44px; padding: 0 18px; border-radius: 10px;
   border: 1px solid var(--line-2); background: transparent; color: var(--ink);
   font-weight: 450; white-space: nowrap;
-  transition: transform .15s var(--ease), background-color .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease);
+  transition: transform .2s var(--ease), background-color .2s var(--ease), border-color .2s var(--ease), color .2s var(--ease);
 }
 .btn kbd {
   font-size: 12px; padding: 1px 6px; border-radius: 5px;
@@ -131,7 +131,7 @@ h2 .sym, .sym { font-variation-settings: "MONO" 1; }
   .btn:hover { transform: translateY(-1px); background: var(--surface); border-color: var(--ink); }
   .btn.primary:hover, .btn.felt:hover { background: color-mix(in srgb, var(--ink) 86%, var(--bg)); }
 }
-.btn:active { transform: translateY(1px) scale(.985); transition-duration: .09s; }
+.btn:active { transform: translateY(1px) scale(.985); transition-duration: .12s; }
 .btn.primary, .btn.felt { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .btn.danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, transparent); }
 .btn.ghost { border-color: transparent; padding: 0 10px; }
@@ -201,7 +201,7 @@ textarea.input { height: auto; padding: 12px 14px; }
   height: 36px; padding: 0 14px; border-radius: 999px;
   border: 1px solid var(--line-2); background: transparent; font-size: 14px;
   font-variation-settings: "MONO" 1;
-  transition: transform .15s var(--ease), background-color .15s var(--ease), color .15s var(--ease), border-color .15s var(--ease);
+  transition: transform .2s var(--ease), background-color .2s var(--ease), color .2s var(--ease), border-color .2s var(--ease);
 }
 @media (hover: hover) and (pointer: fine) { .pill:hover { border-color: var(--ink); transform: translateY(-1px); } }
 .pill:active { transform: scale(.97); }
@@ -240,11 +240,11 @@ textarea.input { height: auto; padding: 12px 14px; }
 .plan .tick { stroke: var(--line-2); stroke-width: 1; }
 .plan .dim { stroke: var(--line-2); stroke-width: 1; fill: none; }
 .plan text { fill: var(--muted); font-family: var(--font); font-variation-settings: "MONO" 1; font-size: 13px; }
-.poker.draw .plan .d { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1.3s var(--ease-enter) forwards; }
-.poker.draw .plan .rail-i.d { animation-delay: .12s; }
-.poker.draw .plan .f { opacity: 0; animation: fadeIn .8s var(--ease) .5s forwards; }
-.poker.draw .plan .bet, .poker.draw .plan text, .poker.draw .plan .tick, .poker.draw .plan .dim { opacity: 0; animation: fadeIn .7s var(--ease) .7s forwards; }
-.poker.draw .felt-center { animation: riseIn .7s var(--ease-enter) .55s both; }
+.poker.draw .plan .d { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1.8s var(--ease-enter) forwards; }
+.poker.draw .plan .rail-i.d { animation-delay: .18s; }
+.poker.draw .plan .f { opacity: 0; animation: fadeIn 1s var(--ease) .7s forwards; }
+.poker.draw .plan .bet, .poker.draw .plan text, .poker.draw .plan .tick, .poker.draw .plan .dim { opacity: 0; animation: fadeIn .9s var(--ease) .95s forwards; }
+.poker.draw .felt-center { animation: riseIn .9s var(--ease-enter) .75s both; }
 @keyframes riseIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes draw { to { stroke-dashoffset: 0; } }
 
@@ -255,7 +255,7 @@ textarea.input { height: auto; padding: 12px 14px; }
 .felt-logo { font-size: clamp(18px, 4.6vw, 26px); font-weight: 450; letter-spacing: .01em; }
 .felt-label { font-size: 12px; color: var(--muted); font-variation-settings: "MONO" 1; }
 .felt-pot { font-size: clamp(28px, 7vw, 44px); font-weight: 400; letter-spacing: -.02em; line-height: 1.05; font-variation-settings: "MONO" 1; }
-.felt-pot.bump { animation: bump .45s var(--ease-enter); }
+.felt-pot.bump { animation: bump .6s var(--ease-enter); }
 .felt-stack { position: absolute; transform: translate(-50%, -50%); pointer-events: none; z-index: 1; }
 .poker-note { position: absolute; font-size: 12px; color: var(--muted); font-variation-settings: "MONO" 1; white-space: nowrap; }
 .poker-note.tl { left: -32px; top: -44px; }
@@ -287,7 +287,7 @@ textarea.input { height: auto; padding: 12px 14px; }
 .seat.out .avatar { color: var(--muted); box-shadow: inset 0 0 0 1.5px var(--line-2), 0 0 0 4px var(--bg); }
 .seat.out .seat-tag b { text-decoration: line-through; text-decoration-color: var(--red); color: var(--muted); }
 .seat.out .seat-tag em { color: var(--red); }
-.seat.pop { animation: seatIn .5s var(--ease-enter) both; }
+.seat.pop { animation: seatIn .7s var(--ease-enter) both; }
 @keyframes seatIn { from { opacity: 0; transform: translate(-50%, -50%) scale(.6); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
 
 .pot-meta {
@@ -311,8 +311,8 @@ textarea.input { height: auto; padding: 12px 14px; }
 .pcard .actions { display: flex; gap: 6px; }
 .pcard.busted .name, .pcard.busted .in { color: var(--muted); }
 .pcard.busted .name { text-decoration: line-through; text-decoration-color: var(--red); }
-.pcard.flash-in { animation: flashIn .9s var(--ease); }
-.pcard.shake { animation: shake .45s var(--ease); }
+.pcard.flash-in { animation: flashIn 1.2s var(--ease); }
+.pcard.shake { animation: shake .55s var(--ease); }
 .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--surface-2); color: var(--muted); margin-left: 8px; vertical-align: 2px; font-variation-settings: "MONO" 1; }
 .tag.bust { background: transparent; color: var(--red); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red) 45%, transparent); }
 .tools { margin-top: 10px; }
@@ -371,7 +371,7 @@ details.card[open] > summary { margin-bottom: 8px; }
 .board .bar-wrap { flex: 1; height: 2px; background: var(--line); position: relative; }
 .board .bar-wrap::after { content: ""; position: absolute; left: 50%; top: -4px; bottom: -4px; width: 1px; background: var(--line-2); }
 .board .bar-fill { position: absolute; top: -1px; bottom: -1px; transform-origin: var(--o, left); }
-.board.grow .bar-fill { animation: grow .9s var(--ease-enter) both; }
+.board.grow .bar-fill { animation: grow 1.2s var(--ease-enter) both; }
 .board .val { width: 76px; text-align: right; font-variation-settings: "MONO" 1; }
 @keyframes grow { from { transform: scaleX(0); } }
 
@@ -381,7 +381,7 @@ details.card[open] > summary { margin-bottom: 8px; }
   background: var(--surface); color: var(--ink); box-shadow: 0 24px 60px rgba(20, 14, 26, .25);
 }
 .modal::backdrop { background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(2px); }
-.modal[open] { animation: modalIn .32s var(--ease-enter); }
+.modal[open] { animation: modalIn .42s var(--ease-enter); }
 .modal[open]::backdrop { animation: fadeIn .25s var(--ease); }
 .modal-body { padding: 22px; }
 .modal h3 { margin: 0 0 4px; font-size: 20px; font-weight: 450; letter-spacing: -.01em; }
@@ -393,7 +393,7 @@ details.card[open] > summary { margin-bottom: 8px; }
   position: fixed; left: 50%; bottom: 92px; transform: translate(-50%, 12px);
   background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px;
   font-size: 14px; opacity: 0; pointer-events: none; z-index: 60;
-  transition: opacity .2s var(--ease), transform .3s var(--ease-enter); display: flex; gap: 14px; align-items: center;
+  transition: opacity .28s var(--ease), transform .4s var(--ease-enter); display: flex; gap: 14px; align-items: center;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
 .toast button { background: none; border: 0; color: inherit; padding: 0; text-decoration: underline; text-underline-offset: 3px; }
@@ -421,17 +421,17 @@ details.card[open] > summary { margin-bottom: 8px; }
 .empty { text-align: center; padding: 24px 10px; color: var(--muted); }
 
 /* ---------- first paint of a screen: the heading rises out of its mask, the rest follows ---------- */
-.app.enter h1 .ln > span { animation: lineUp .7s var(--ease-enter) both; }
-.app.enter h1 .ln:nth-child(2) > span { animation-delay: .08s; }
+.app.enter h1 .ln > span { animation: lineUp .9s var(--ease-enter) both; }
+.app.enter h1 .ln:nth-child(2) > span { animation-delay: .1s; }
 .app.enter .sub,
-.app.enter .reveal { animation: rise .55s var(--ease-enter) both; animation-delay: calc(.32s + var(--d, 0) * 60ms); }
+.app.enter .reveal { animation: rise .75s var(--ease-enter) both; animation-delay: calc(.42s + var(--d, 0) * 80ms); }
 @keyframes lineUp { from { transform: translateY(105%); } }
 @keyframes rise { from { opacity: 0; transform: translateY(12px); } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 /* page-to-page: a quick cross-fade with a 8px drift */
-::view-transition-old(root) { animation: .18s var(--ease) both vtOut; }
-::view-transition-new(root) { animation: .32s var(--ease-enter) both vtIn; }
+::view-transition-old(root) { animation: .26s var(--ease) both vtOut; }
+::view-transition-new(root) { animation: .46s var(--ease-enter) both vtIn; }
 @keyframes vtOut { to { opacity: 0; transform: translateY(-6px); } }
 @keyframes vtIn { from { opacity: 0; transform: translateY(8px); } }
 
@@ -460,3 +460,22 @@ details.card[open] > summary { margin-bottom: 8px; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0s !important; transition-duration: .01ms !important; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }
+
+/* chips on the felt: round stacks overlapping like a venn diagram, seen at an angle */
+.cluster { position: relative; display: block; width: 64px; height: 48px; }
+.cluster .s3 {
+  position: absolute; left: 50%; top: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px;
+  transform: translate(var(--x), var(--y));
+}
+.cluster .chip { transform: scaleY(.58); transform-origin: 50% 50%; }
+.cluster .chip::before { inset: 24%; }
+.poker.draw .cluster .s3 { animation: chipDrop .8s var(--ease-enter) both; animation-delay: calc(.9s + var(--i, 0) * 60ms); }
+@keyframes chipDrop { from { opacity: 0; transform: translate(var(--x), calc(var(--y) - 10px)); } }
+
+/* late buy-in dialog */
+.field-lbl { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+.field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+select.input { appearance: none; padding-right: 30px; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
+.advice { margin: 14px 0 0; padding: 12px 14px; border-radius: 10px; background: var(--bg); font-size: 14px; line-height: 1.5; }
+.advice b { font-weight: 500; }
+@media (max-width: 560px) { .cluster { transform: scale(.64); } }
