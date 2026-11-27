@@ -1,19 +1,25 @@
 # chipme ♠
 
-A minimal poker buy-in counter and settle-up ledger. No build step, no backend: just `index.html`, `styles.css` and `app.js`.
+A minimal poker buy-in counter and settle-up ledger. No build step, no backend: `index.html`, `styles.css`, `chips.js` and `app.js`.
 
 ## Features
-- Pick a buy-in ($20, $25, $50 or a custom amount) and add your friends
-- Pick the blinds (10¢/20¢ up to $2/$5, or custom) and see how many chips of each value to give every player, sized to those blinds and using $2 chips to cut down on small ones, plus the totals for the table and a warning for short stacks
-- Joining mid-game asks where the newcomer sits and where the big blind is, and explains whether they post a big-blind premium or wait for the blind
-- An oval poker table (wood rail, dark felt) that gains a seat with the player's name for every friend added; during the game it shows the pot and each player's buy-ins and chip stack
-- Clay-style chips with edge spots and gold serif values
-- Rebuy for the same, more, or less than the buy-in; add late players mid-game
-- Animations for buy-ins (chips fly into the pot), busts (screen cracks, skulls rain) and rebuys (chip fountain, "back from the dead")
+- Pick a buy-in ($20, $25, $50 or a custom amount) and seat your friends at a drawn table, one seat each
+- Pick the blinds (10¢/20¢ up to $2/$5, or custom) and get the chips to hand each player, chosen by the optimiser in `chips.js` (below), plus the totals for the table and a warning for short stacks
+- During the game the table shows the money in play (everything bought in so far), each seat's buy-ins and its chips as overlapping stacks
+- Rebuy for the same, more or less than the buy-in; bust players out and buy them back in
+- Joining mid-game asks where the newcomer sits and where the big blind is, and says whether they post a big-blind premium, wait for the blind, or wait for the button
 - Ledger of every action, with undo and per-entry delete
 - Cash-out page: enter final stacks, see whether the chips balance (or by how much they're off), and get the fewest e-transfers needed to settle up
 - Leaderboard with top winner and biggest loser
+- Keyboard shortcuts: N seats or adds a player, D deals, C counts the chips
 - Everything autosaves to `localStorage`, so refreshing or closing the tab doesn't lose the game
+
+## How the chips are chosen
+`chips.js` plans one chip set per game from the blinds and the main buy-in. A stack has to stay playable: the smallest chip divides both blinds, every value can be broken into the ones below it, and the chips at or under the big blind cover about 10 big blinds. Among the sets and counts that pass (values from 5¢ to $100, including 20¢ and $2), it takes the one with the fewest chips, with the smallest values counting extra and a small charge for each extra value. A rebuy of another size is counted in the same set.
+
+```bash
+node chips.test.js
+```
 
 ## Run locally
 Open `index.html` in a browser, or serve the folder:

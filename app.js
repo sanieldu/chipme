@@ -8,24 +8,18 @@
   // clay-chip palette (edge spots + inlay are derived from the base colour in CSS)
   const CHIP_COLORS = ["#d63a3a", "#1f8fd6", "#1e9b4a", "#f07a2c", "#232325", "#5b3aa6", "#f2c230", "#f1ede3"];
   const PRESET_COLORS = ["#1f8fd6", "#1e9b4a", "#f07a2c"];   // $20 blue, $25 green, $50 orange
-  // blind levels -> the chip values a home game would use for them (cents)
+  // blind levels offered on the setup page (cents); the chip set itself comes from chips.js
   const BLINDS = [
-    { sb: 10, bb: 20, chips: [10, 50, 100, 200, 500] },
-    { sb: 25, bb: 50, chips: [25, 100, 200, 500, 2500] },
-    { sb: 50, bb: 100, chips: [50, 100, 200, 500, 2500] },
-    { sb: 100, bb: 200, chips: [100, 200, 500, 2500, 10000] },
-    { sb: 200, bb: 500, chips: [100, 200, 500, 2500, 10000] },
+    { sb: 10, bb: 20 }, { sb: 25, bb: 50 }, { sb: 50, bb: 100 }, { sb: 100, bb: 200 }, { sb: 200, bb: 500 },
   ];
-  const LADDER = [5, 10, 25, 50, 100, 200, 500, 1000, 2500, 10000, 50000];
-  // chip colours by rank in the set; a $2 chip is always blue
-  const RANK = [
-    { name: "white", color: "#f1ede3" },
-    { name: "red", color: "#d63a3a" },
-    { name: "green", color: "#1e9b4a" },
-    { name: "black", color: "#232325" },
-    { name: "yellow", color: "#f2c230" },
-  ];
-  const TWO = { name: "blue", color: "#2b6cb8" };
+  // one colour per chip value; the smallest chip in a game is always white
+  const WHITE = { name: "white", color: "#f1ede3" };
+  const LOOK = {
+    5: { name: "pink", color: "#e07a9a" }, 10: { name: "sky", color: "#5aa3d6" }, 20: { name: "yellow", color: "#f2c230" },
+    25: { name: "purple", color: "#7a56a8" }, 50: { name: "orange", color: "#f07a2c" }, 100: { name: "red", color: "#d63a3a" },
+    200: { name: "blue", color: "#2b6cb8" }, 500: { name: "green", color: "#1e9b4a" }, 1000: { name: "teal", color: "#1f8f86" },
+    2500: { name: "black", color: "#232325" }, 10000: { name: "grey", color: "#8a8e96" },
+  };
   const AV_COLORS = ["#b5332e", "#33518f", "#2e7a4f", "#a07a32", "#c0622b", "#2c7f86", "#a4466e", "#6f6a5e"];
 
   const $ = (s, el = document) => el.querySelector(s);
@@ -79,61 +73,38 @@
   const initials = (n) => n.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   const player = (id) => state.players.find((p) => p.id === id);
   const totalIn = (pid) => state.log.filter((l) => l.pid === pid && (l.type === "buyin" || l.type === "rebuy")).reduce((a, l) => a + l.amount, 0);
-  const potTotal = () => state.players.reduce((a, p) => a + totalIn(p.id), 0);
+  const inPlay = () => state.players.reduce((a, p) => a + totalIn(p.id), 0);
   const entries = (pid) => state.log.filter((l) => l.pid === pid && (l.type === "buyin" || l.type === "rebuy")).length;
   const time = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
-  /* ---------------- blinds & chip breakdown ----------------
-     All math in cents. The smallest chip covers the small blind; about 10 big
-     blinds go in small chips for posting/betting, ~30% in the 2nd chip, the rest
-     in the 3rd, with the 4th used once a stack holds lots of the 3rd. */
+  /* ---------------- blinds & chip breakdown (cents) ---------------- */
   const blindLabel = (c) => (c < 100 ? `${c}¢` : `$${c / 100}`);
   const blindsText = (b) => `${blindLabel(b.sb)}/${blindLabel(b.bb)}`;
 
-  function chipSet(b) {
-    const preset = BLINDS.find((x) => x.sb === b.sb && x.bb === b.bb);
-    if (preset) return preset.chips;
-    // custom blinds: smallest chip divides both blinds, then each chip >= 4x the last,
-    // plus a $2 chip between $1 and $5 so fewer $1 chips are needed
-    const d0 = [...LADDER].reverse().find((v) => b.sb % v === 0 && b.bb % v === 0) || 5;
-    const set = [d0];
-    while (set.length < 4) {
-      const next = LADDER.find((v) => v >= set[set.length - 1] * 4);
-      if (!next) break;
-      set.push(next);
-    }
-    if (set.includes(100) && set.includes(500) && !set.includes(200)) set.splice(set.indexOf(500), 0, 200);
-    return set;
+  // The table's chip set is planned once from the blinds and the main buy-in, so everyone plays
+  // with the same chips; a rebuy of another size is counted in that same set.
+  const planCache = new Map();
+  function tablePlan(blinds) {
+    const T = Math.round(state.buyIn * 100);
+    const key = `${blinds.sb}/${blinds.bb}/${T}`;
+    if (!planCache.has(key)) planCache.set(key, ChipOpt.plan(blinds, T));
+    return planCache.get(key);
   }
-  function chipLook(set) {
-    let r = 0;
-    return set.map((c) => (c === 200 ? TWO : RANK[Math.min(r++, RANK.length - 1)]));
-  }
+  const chipLook = (set) => set.map((c, i) => (i === 0 ? WHITE : LOOK[c] || WHITE));
 
-  // All in cents. Small chips first (about 10 big blinds, for posting and betting), then
-  // enough of each middle chip to make change for the next one up (two of the next chip's worth),
-  // then the rest in the biggest chips that fit, so stacks hold as few small chips as they can.
   function chipBreakdown(amount, blinds) {
     let total = Math.round(amount * 100);
     if (!(total > 0) || !blinds) return null;
-    const d = chipSet(blinds);
-    const leftover = total % d[0];
+    const { set, n: planned } = tablePlan(blinds);
+    const leftover = total % set[0];
     total -= leftover;
-    const n = d.map(() => 0);
-    n[0] = Math.floor(Math.min(blinds.bb * 10, total * 0.25) / d[0]);
-    let rem = total - n[0] * d[0];
-    for (let i = 1; i < d.length - 1 && rem > 0; i++) {
-      const want = Math.floor((2 * d[i + 1]) / d[i]);
-      n[i] = Math.min(want, Math.floor(rem / d[i]));
-      rem -= n[i] * d[i];
+    let n = planned;
+    if (total !== Math.round(state.buyIn * 100) - (Math.round(state.buyIn * 100) % set[0])) {
+      const c = ChipOpt.counts(set, total, blinds.bb) || ChipOpt.counts(set, total, blinds.bb, false);
+      n = c ? c.n : set.map((d, i) => (i === 0 ? total / d : 0));
     }
-    for (let i = d.length - 1; i >= 1 && rem > 0; i--) {
-      const k = Math.floor(rem / d[i]);
-      n[i] += k; rem -= k * d[i];
-    }
-    n[0] += rem / d[0];
-    const look = chipLook(d);
-    const rows = d.map((c, i) => ({ cents: c, n: n[i], ...look[i] })).filter((r) => r.n > 0).reverse();
+    const look = chipLook(set);
+    const rows = set.map((c, i) => ({ cents: c, n: n[i], ...look[i] })).filter((r) => r.n > 0).reverse();
     return { rows, total: rows.reduce((a, r) => a + r.n, 0), leftover: leftover / 100, bbs: Math.floor(total / blinds.bb) };
   }
 
@@ -239,7 +210,7 @@
         </div>`;
     }).join("");
     const center = mode === "table"
-      ? `<div class="felt-center" id="pot"><span class="felt-label">Total pot</span><span class="felt-pot" id="potTotal">${money(potTotal())}</span></div>`
+      ? `<div class="felt-center" id="pot"><span class="felt-label">Money in play</span><span class="felt-pot" id="potTotal">${money(inPlay())}</span></div>`
       : `<div class="felt-center"><span class="felt-logo">chipme</span><span class="felt-label">${n ? `${String(n).padStart(2, "0")} seat${n === 1 ? "" : "s"} taken` : "Add a player to take a seat"}</span></div>`;
     const blinds = state.blinds ? blindsText(state.blinds) : "—";
     return `<div class="poker ${mode} ${draw && !reduced ? "draw" : ""}">
@@ -364,7 +335,7 @@
   /* ----- table ----- */
   let shownPot = null;   // the pot figure counts up to its new value instead of jumping
   function renderTable(fresh) {
-    const total = potTotal();
+    const total = inPlay();   // everything bought in so far, not a hand's pot
     const active = state.players.filter((p) => !p.busted).length;
     const rebuys = state.log.filter((l) => l.type === "rebuy").length;
 
