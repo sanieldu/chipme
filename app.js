@@ -23,7 +23,7 @@
     { name: "green", color: "#1e9b4a" },
     { name: "black", color: "#232325" },
   ];
-  const AV_COLORS = ["#e5484d", "#3e63dd", "#18a058", "#8e4ec6", "#f76b15", "#12a594", "#d6409f", "#978365"];
+  const AV_COLORS = ["#b5332e", "#33518f", "#2e7a4f", "#a07a32", "#c0622b", "#2c7f86", "#a4466e", "#6f6a5e"];
 
   const $ = (s, el = document) => el.querySelector(s);
   const app = $("#app");
@@ -144,16 +144,31 @@
   }
 
   /* ---------------- render ---------------- */
+  // the entrance plays on a screen's first paint only, never on the re-renders a tap causes
+  let shownStage = null;
   function render() {
     const order = ["setup", "table", "settle"];
     document.querySelectorAll("#steps span").forEach((el) => {
       const i = order.indexOf(el.dataset.step), cur = order.indexOf(state.stage);
       el.className = i === cur ? "on" : i < cur ? "done" : "";
     });
-    if (state.stage === "setup") renderSetup();
-    else if (state.stage === "table") renderTable();
+    const fresh = shownStage !== state.stage;
+    shownStage = state.stage;
+    app.classList.toggle("enter", fresh && !reduced);
+    if (fresh) { seatPos = {}; boardShown = false; }
+    if (state.stage === "setup") renderSetup(fresh);
+    else if (state.stage === "table") renderTable(fresh);
     else renderSettle();
   }
+  // moving between screens cross-fades (View Transitions where the browser has them)
+  function go(mutator) {
+    const run = () => { commit(mutator); scrollTo(0, 0); };
+    if (document.startViewTransition && !reduced) return document.startViewTransition(run).finished.catch(() => {});
+    run();
+    return Promise.resolve();
+  }
+  const heading = (...lines) => `<h1>${lines.map((l) => `<span class="ln"><span>${l}</span></span>`).join("")}</h1>`;
+  const sec = (label, body, d = 0) => `<section class="sec reveal" style="--d:${d}"><h2>${label}</h2><div>${body}</div></section>`;
 
   function avatar(p) {
     return `<span class="avatar" style="--av:${p.color}">${esc(initials(p.name))}</span>`;
@@ -171,7 +186,14 @@
 
   /* ----- the poker table: one seat per player, spaced evenly around the rail ----- */
   let seatPos = {};   // pid -> [x%, y%] from the last render, so seats glide when one is added
-  function tableHTML(mode) {
+  // the table as a technical drawing: outer rail, felt edge, dashed betting line, ticks and a dimension line
+  const PLAN = `<svg class="plan" viewBox="0 0 1000 560" aria-hidden="true">
+      <rect class="rail-o d" pathLength="1" x="8" y="8" width="984" height="544" rx="272"/>
+      <rect class="rail-i d" pathLength="1" x="44" y="44" width="912" height="472" rx="236"/>
+      <rect class="bet" x="170" y="140" width="660" height="280" rx="140"/>
+      <path class="tick" d="M500 44v14M500 502v14M44 280h14M942 280h14"/>
+    </svg>`;
+  function tableHTML(mode, draw) {
     const ps = state.players;
     const n = ps.length;
     const seats = ps.map((p, i) => {
@@ -181,16 +203,23 @@
       const tin = totalIn(p.id);
       const stack = mode === "table" && tin > 0 && !p.busted
         ? `<div class="felt-stack" style="left:${sx}%;top:${sy}%">${stackHTML(Math.min(7, Math.max(2, Math.round((tin / state.buyIn) * 3))), CHIP_COLORS[i % 7])}</div>` : "";
+      const code = `S-${String(i + 1).padStart(2, "0")}`;
       return `${stack}<div class="seat ${p.busted ? "out" : ""}" data-seat="${p.id}" data-x="${x}" data-y="${y}" style="left:${x}%;top:${y}%">
           ${avatar(p)}
-          <span class="seat-tag"><b>${esc(p.name)}</b>${mode === "table" ? `<em class="num">${p.busted ? "busted 💀" : money(tin)}</em>` : ""}</span>
+          <span class="seat-tag"><i>${code}</i><b>${esc(p.name)}</b>${mode === "table" ? `<em>${p.busted ? "out" : money(tin)}</em>` : ""}</span>
           ${mode === "setup" ? `<button class="seat-x" data-rm="${p.id}" aria-label="Remove ${esc(p.name)}">×</button>` : ""}
         </div>`;
     }).join("");
     const center = mode === "table"
-      ? `<div class="felt-center" id="pot"><span class="felt-label">Total pot</span><span class="felt-pot num" id="potTotal">${money(potTotal())}</span></div>`
-      : `<div class="felt-center"><span class="felt-logo">♠ chipme ♠</span><span class="felt-label">${n ? `${n} seat${n === 1 ? "" : "s"} taken` : "Add players to take a seat"}</span></div>`;
-    return `<div class="poker ${mode}"><div class="rail"><div class="felt"><div class="felt-line"></div>${center}</div></div><div class="seats">${seats}</div></div>`;
+      ? `<div class="felt-center" id="pot"><span class="felt-label">Total pot</span><span class="felt-pot" id="potTotal">${money(potTotal())}</span></div>`
+      : `<div class="felt-center"><span class="felt-logo">chipme</span><span class="felt-label">${n ? `${String(n).padStart(2, "0")} seat${n === 1 ? "" : "s"} taken` : "Add a player to take a seat"}</span></div>`;
+    const blinds = state.blinds ? blindsText(state.blinds) : "—";
+    return `<div class="poker ${mode} ${draw && !reduced ? "draw" : ""}">
+      <span class="poker-note tl">T-01 · No-limit hold'em</span>
+      ${PLAN}${center}
+      <div class="seats">${seats}</div>
+      <span class="poker-note br">${String(n).padStart(2, "0")} seats · ${blinds}</span>
+    </div>`;
   }
   function animateSeats() {
     const next = {};
@@ -201,54 +230,57 @@
       if (reduced) return;
       if (!prev) el.classList.add("pop");
       else if (prev[0] !== x || prev[1] !== y)
-        el.animate([{ left: prev[0] + "%", top: prev[1] + "%" }, { left: x + "%", top: y + "%" }], { duration: 550, easing: "cubic-bezier(.2,1,.3,1)" });
+        el.animate([{ left: prev[0] + "%", top: prev[1] + "%" }, { left: x + "%", top: y + "%" }], { duration: 600, easing: "cubic-bezier(.22,1,.36,1)" });
     });
     seatPos = next;
   }
 
   /* ----- setup ----- */
   let blindsCustomOpen = false;
-  function renderSetup() {
+  function renderSetup(fresh) {
     const custom = !PRESETS.includes(state.buyIn);
     const bl = state.blinds;
     const customBlinds = blindsCustomOpen || (bl && !BLINDS.some((b) => b.sb === bl.sb && b.bb === bl.bb));
+    const n = state.players.length;
     app.innerHTML = `
-      <h1>Shuffle up &amp; deal.</h1>
-      <p class="sub">Add your friends, pick the stakes, and chipme keeps the ledger.</p>
+      ${heading("Shuffle up", "and deal.")}
+      <p class="sub">Seat your friends, pick the stakes, and chipme keeps the ledger.</p>
 
-      ${tableHTML("setup")}
-      <form id="addForm" class="row">
-        <input id="nameIn" class="input grow" placeholder="Friend's name" maxlength="24" autocomplete="off" />
-        <button class="btn primary" type="submit">Take a seat</button>
-      </form>
-      ${state.players.length < 2 ? `<p class="muted hint">Add at least two players to start.</p>` : ""}
+      <div class="reveal" style="--d:1">${tableHTML("setup", fresh)}</div>
 
-      <h2>Buy-in</h2>
-      <div class="presets" id="presets">
-        ${PRESETS.map((v, i) => `<button class="preset ${state.buyIn === v ? "sel" : ""}" data-v="${v}" aria-label="$${v} buy-in">${chipHTML(PRESET_COLORS[i], v, 70)}</button>`).join("")}
-      </div>
-      <div class="row" style="margin-top:12px">
-        <label class="muted" for="customBuy" style="font-size:14px">Custom</label>
-        <div class="money grow"><input id="customBuy" class="input num" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="Any amount" value="${custom ? state.buyIn : ""}" /></div>
-      </div>
+      ${sec(`Players <span class="muted mono">${String(n).padStart(2, "0")}</span>`, `
+        <form id="addForm" class="row">
+          <input id="nameIn" class="input grow" placeholder="Friend's name" maxlength="24" autocomplete="off" aria-label="Friend's name" />
+          <button class="btn primary" type="submit">Take a seat <kbd>↵</kbd></button>
+        </form>
+        ${n < 2 ? `<p class="muted hint">Seat at least two players to start. Press <kbd class="mono">N</kbd> to jump here.</p>` : ""}`, 2)}
 
-      <h2>Blinds</h2>
-      <div class="pills" id="blinds">
-        ${BLINDS.map((b, i) => `<button class="pill ${bl && !customBlinds && bl.sb === b.sb && bl.bb === b.bb ? "sel" : ""}" data-b="${i}">${blindsText(b)}</button>`).join("")}
-        <button class="pill ${customBlinds ? "sel" : ""}" data-b="custom">Custom</button>
-      </div>
-      ${customBlinds ? `
-        <form class="row" id="customBlinds" style="margin-top:10px">
-          <div class="money grow"><input id="sbIn" class="input num" type="number" inputmode="decimal" min="0.05" step="0.05" placeholder="Small" value="${bl ? bl.sb / 100 : ""}" /></div>
-          <span class="muted">/</span>
-          <div class="money grow"><input id="bbIn" class="input num" type="number" inputmode="decimal" min="0.05" step="0.05" placeholder="Big" value="${bl ? bl.bb / 100 : ""}" /></div>
-          <button class="btn" type="submit">Set</button>
-        </form>` : ""}
-      ${breakdownHTML(state.buyIn, state.players.length)}
+      ${sec("Buy-in", `
+        <div class="presets" id="presets">
+          ${PRESETS.map((v, i) => `<button class="preset ${state.buyIn === v ? "sel" : ""}" data-v="${v}" aria-label="$${v} buy-in">${chipHTML(PRESET_COLORS[i], v, 64)}</button>`).join("")}
+        </div>
+        <div class="row custom-row">
+          <label class="muted" for="customBuy">Custom</label>
+          <div class="money grow"><input id="customBuy" class="input" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="Any amount" value="${custom ? state.buyIn : ""}" /></div>
+        </div>`, 3)}
+
+      ${sec("Blinds", `
+        <div class="pills" id="blinds">
+          ${BLINDS.map((b, i) => `<button class="pill ${bl && !customBlinds && bl.sb === b.sb && bl.bb === b.bb ? "sel" : ""}" data-b="${i}">${blindsText(b)}</button>`).join("")}
+          <button class="pill ${customBlinds ? "sel" : ""}" data-b="custom">Custom</button>
+        </div>
+        ${customBlinds ? `
+          <form class="row" id="customBlinds" style="margin-top:12px">
+            <div class="money grow"><input id="sbIn" class="input" type="number" inputmode="decimal" min="0.05" step="0.05" placeholder="Small" aria-label="Small blind" value="${bl ? bl.sb / 100 : ""}" /></div>
+            <span class="muted">/</span>
+            <div class="money grow"><input id="bbIn" class="input" type="number" inputmode="decimal" min="0.05" step="0.05" placeholder="Big" aria-label="Big blind" value="${bl ? bl.bb / 100 : ""}" /></div>
+            <button class="btn" type="submit">Set</button>
+          </form>` : ""}
+        ${breakdownHTML(state.buyIn, n)}`, 4)}
 
       <div class="bar"><div class="bar-inner">
         <button class="btn felt block" id="start" ${state.players.length < 2 || !(state.buyIn > 0) ? "disabled" : ""}>
-          Deal everyone in · ${money(state.buyIn)} each
+          Deal everyone in · ${money(state.buyIn)} each <kbd>D</kbd>
         </button>
       </div></div>`;
 
@@ -289,12 +321,11 @@
     app.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => commit((s) => { s.players = s.players.filter((p) => p.id !== b.dataset.rm); }));
     animateSeats();
     $("#start").onclick = () => {
-      commit((s) => {
+      go((s) => {
         s.stage = "table";
         s.startedAt = Date.now();
         s.players.forEach((p) => { if (!totalIn(p.id)) s.log.push({ id: uid(), pid: p.id, type: "buyin", amount: s.buyIn, ts: Date.now() }); });
-      });
-      dealAnimation();
+      }).then(dealAnimation);
     };
   }
 
@@ -303,54 +334,55 @@
   }
 
   /* ----- table ----- */
-  function renderTable() {
+  let shownPot = null;   // the pot figure counts up to its new value instead of jumping
+  function renderTable(fresh) {
     const total = potTotal();
     const active = state.players.filter((p) => !p.busted).length;
     const rebuys = state.log.filter((l) => l.type === "rebuy").length;
 
     app.innerHTML = `
-      ${tableHTML("table")}
-      <div class="pot-meta">
-        <span>🪑 ${active}/${state.players.length} playing</span>
-        <span>🔁 ${rebuys} rebuy${rebuys === 1 ? "" : "s"}</span>
-        <span>💵 ${money(state.buyIn)} buy-in</span>
-        ${state.blinds ? `<span>🎲 ${blindsText(state.blinds)} blinds</span>` : ""}
+      <div class="reveal" style="--d:0">${tableHTML("table", fresh)}</div>
+      <div class="pot-meta reveal" style="--d:1">
+        <span><b>${active}/${state.players.length}</b> playing</span>
+        <span><b>${rebuys}</b> rebuy${rebuys === 1 ? "" : "s"}</span>
+        <span><b>${money(state.buyIn)}</b> buy-in</span>
+        ${state.blinds ? `<span><b>${blindsText(state.blinds)}</b> blinds</span>` : ""}
       </div>
 
-      <div class="players" id="players">
-        ${state.players.map((p, i) => {
-          const n = entries(p.id);
-          return `
-          <div class="pcard ${p.busted ? "busted" : ""}" data-pid="${p.id}" style="animation-delay:${i * 30}ms">
-            ${avatar(p)}
-            <div class="info">
-              <div class="name">${esc(p.name)}${p.busted ? `<span class="tag bust">busted</span>` : n > 1 ? `<span class="tag">×${n}</span>` : ""}</div>
-              <div class="meta">${n} buy-in${n === 1 ? "" : "s"}</div>
-            </div>
-            <div class="in num">${money(totalIn(p.id))}<small>in</small></div>
-            <div class="actions">
-              ${p.busted
-                ? `<button class="btn small felt" data-act="rebuy" data-pid="${p.id}">↻ Rebuy</button>`
-                : `<button class="btn small" data-act="rebuy" data-pid="${p.id}">+ Rebuy</button>
-                   <button class="btn small danger" data-act="bust" data-pid="${p.id}">Bust</button>`}
-            </div>
-          </div>`;
-        }).join("")}
-      </div>
+      ${sec(`Players <span class="muted mono">${String(state.players.length).padStart(2, "0")}</span>`, `
+        <div class="players" id="players">
+          ${state.players.map((p) => {
+            const n = entries(p.id);
+            return `
+            <div class="pcard ${p.busted ? "busted" : ""}" data-pid="${p.id}">
+              ${avatar(p)}
+              <div class="info">
+                <div class="name">${esc(p.name)}${p.busted ? `<span class="tag bust">out</span>` : n > 1 ? `<span class="tag">×${n}</span>` : ""}</div>
+                <div class="meta">${n} buy-in${n === 1 ? "" : "s"}</div>
+              </div>
+              <div class="in">${money(totalIn(p.id))}<small>in</small></div>
+              <div class="actions">
+                ${p.busted
+                  ? `<button class="btn small felt" data-act="rebuy" data-pid="${p.id}">Buy back in</button>`
+                  : `<button class="btn small" data-act="rebuy" data-pid="${p.id}">Rebuy</button>
+                     <button class="btn small danger" data-act="bust" data-pid="${p.id}">Bust</button>`}
+              </div>
+            </div>`;
+          }).join("")}
+        </div>
+        <div class="row wrap tools">
+          <button class="btn small ghost" id="addLate">Add player <kbd>N</kbd></button>
+          <button class="btn small ghost" id="changeBuy">Change buy-in</button>
+          <span class="grow"></span>
+          <button class="btn small ghost danger" id="reset">New game</button>
+        </div>`, 2)}
 
-      <div class="row wrap" style="margin-top:12px">
-        <button class="btn small ghost" id="addLate">+ Add player</button>
-        <button class="btn small ghost" id="changeBuy">Change buy-in</button>
-        <span class="grow"></span>
-        <button class="btn small ghost danger" id="reset">New game</button>
-      </div>
-
-      <h2>Ledger</h2>
-      ${ledgerHTML()}
+      ${sec("Ledger", ledgerHTML(), 3)}
 
       <div class="bar"><div class="bar-inner">
-        <button class="btn primary block" id="toSettle">Game over → count chips</button>
+        <button class="btn primary block" id="toSettle">Game over, count the chips <kbd>C</kbd></button>
       </div></div>`;
+    countPot(fresh ? 0 : shownPot, total);
 
     app.querySelectorAll("[data-act]").forEach((b) => b.onclick = () => {
       const p = player(b.dataset.pid);
@@ -360,14 +392,31 @@
     $("#addLate").onclick = openAddLate;
     $("#changeBuy").onclick = openChangeBuy;
     $("#reset").onclick = confirmReset;
-    $("#toSettle").onclick = () => commit((s) => { s.stage = "settle"; });
+    $("#toSettle").onclick = () => go((s) => { s.stage = "settle"; });
     bindLedger();
     animateSeats();
   }
 
+  let potRaf = 0;
+  function countPot(from, to) {
+    const el = $("#potTotal");
+    shownPot = to;
+    if (!el) return;
+    cancelAnimationFrame(potRaf);
+    if (reduced || from == null || from === to) { el.textContent = money(to); return; }
+    const t0 = performance.now(), dur = 700;
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      el.textContent = money(Math.round((from + (to - from) * e) * 100) / 100);
+      if (k < 1) potRaf = requestAnimationFrame(step);
+    };
+    el.textContent = money(from);
+    potRaf = requestAnimationFrame(step);
+  }
+
   function ledgerHTML() {
     if (!state.log.length) return `<div class="card empty">Nothing yet.</div>`;
-    const label = { buyin: "bought in", rebuy: "rebought", bust: "busted out 💀", back: "back in" };
+    const label = { buyin: "bought in", rebuy: "rebought", bust: "busted out", back: "back in" };
     return `<details class="card"><summary>${state.log.length} entr${state.log.length === 1 ? "y" : "ies"}</summary>
       <ul class="ledger">${[...state.log].reverse().map((l) => {
         const p = player(l.pid); if (!p) return "";
@@ -441,6 +490,7 @@
     return out;
   }
 
+  let boardShown = false;
   function renderSettle() {
     const { rows, missing, tin, tout, diff } = computeSettle();
     const balanced = !missing.length && Math.abs(diff) < 0.01;
@@ -449,60 +499,60 @@
     const ranked = [...rows].sort((a, b) => b.net - a.net);
     const maxAbs = Math.max(1, ...rows.map((r) => Math.abs(r.net)));
     const top = ranked[0], bottom = ranked[ranked.length - 1];
+    const growBars = canSettle && !boardShown;   // the bars draw once, when the board first appears
+    boardShown = canSettle;
 
     let balHTML;
     if (missing.length) {
-      balHTML = `<div class="balance wait"><span class="icon">⏳</span><div><strong>Waiting on ${missing.length} stack${missing.length === 1 ? "" : "s"}</strong><span class="muted">${missing.map((r) => esc(r.p.name)).join(", ")}</span></div></div>`;
+      balHTML = `<div class="balance wait"><span class="icon">○</span><div><strong>Waiting on ${missing.length} stack${missing.length === 1 ? "" : "s"}</strong><span class="muted">${missing.map((r) => esc(r.p.name)).join(", ")}</span></div></div>`;
     } else if (balanced) {
-      balHTML = `<div class="balance ok"><span class="icon">✓</span><div><strong>Everything balances</strong><span class="muted">${money(tout)} counted = ${money(tin)} bought in</span></div></div>`;
+      balHTML = `<div class="balance ok"><span class="icon">✓</span><div><strong>Everything balances</strong><span class="muted mono">${money(tout)} counted = ${money(tin)} bought in</span></div></div>`;
     } else {
-      balHTML = `<div class="balance off"><span class="icon">!</span><div class="grow"><strong>Off by ${money(Math.abs(diff))} — ${diff > 0 ? "too many chips" : "chips missing"}</strong>
-        <span class="muted">${money(tout)} counted vs ${money(tin)} bought in. Recount, or split the difference evenly.</span>
-        <label class="row" style="margin-top:8px;font-size:14px;gap:8px"><input type="checkbox" id="anyway" ${state.settleAnyway ? "checked" : ""}/> Settle anyway (${money(Math.abs(diff) / rows.length)} per player)</label></div></div>`;
+      balHTML = `<div class="balance off"><span class="icon">▲</span><div class="grow"><strong>Off by ${money(Math.abs(diff))}, ${diff > 0 ? "too many chips" : "chips missing"}</strong>
+        <span class="muted"><span class="mono">${money(tout)}</span> counted against <span class="mono">${money(tin)}</span> bought in. Recount, or split the difference evenly.</span>
+        <label class="row"><input type="checkbox" id="anyway" ${state.settleAnyway ? "checked" : ""}/> Settle anyway (${money(Math.abs(diff) / rows.length)} per player)</label></div></div>`;
     }
 
     app.innerHTML = `
-      <h1>Count 'em up.</h1>
-      <p class="sub">Enter everyone's final chip stack (in dollars). Busted players are already at $0.</p>
+      ${heading("Count", "the chips.")}
+      <p class="sub">Enter each final stack in dollars. Busted players already sit at $0.</p>
 
-      <div class="card">
+      ${sec("Final stacks", `<div class="card">
         ${rows.map((r) => `
           <div class="stack-row">
-            <div class="row">${avatar(r.p)}<div class="grow"><div style="font-weight:700">${esc(r.p.name)}</div>
-              <div class="delta num ${r.final == null ? "muted" : r.net > 0 ? "pos" : r.net < 0 ? "neg" : "muted"}" data-delta="${r.p.id}">in ${money(r.in)}${r.final == null ? "" : ` · ${money(r.net, true)}`}</div></div></div>
-            <div class="money"><input class="input num" type="number" inputmode="decimal" min="0" step="0.01" data-final="${r.p.id}" value="${r.final ?? ""}" placeholder="0" /></div>
+            <div class="row">${avatar(r.p)}<div class="grow"><div class="who">${esc(r.p.name)}</div>
+              <div class="delta ${r.final == null ? "muted" : r.net > 0 ? "pos" : r.net < 0 ? "neg" : "muted"}" data-delta="${r.p.id}">in ${money(r.in)}${r.final == null ? "" : ` · ${money(r.net, true)}`}</div></div></div>
+            <div class="money"><input class="input" type="number" inputmode="decimal" min="0" step="0.01" data-final="${r.p.id}" value="${r.final ?? ""}" placeholder="0" aria-label="${esc(r.p.name)}'s final stack" /></div>
           </div>`).join("")}
-      </div>
+      </div>`, 2)}
 
-      <h2>Balance check</h2>
-      ${balHTML}
+      ${sec("Balance", balHTML, 3)}
 
       ${canSettle ? `
-        <h2>Who e-transfers who</h2>
-        ${transfers.length
-          ? `<ul class="transfers">${transfers.map((t, i) => `<li style="animation-delay:${i * 60}ms">
+        ${sec("E-transfers", transfers.length
+          ? `<ul class="transfers">${transfers.map((t) => `<li>
               <span class="avatar" style="--av:${t.from.color}">${esc(initials(t.from.name))}</span>
-              <span><b>${esc(t.from.name)}</b> <span class="arrow">→</span> <b>${esc(t.to.name)}</b></span>
-              <span class="amt num">${money(t.amt)}</span></li>`).join("")}</ul>
-             <div class="row" style="margin-top:10px"><button class="btn small" id="copy">Copy summary</button></div>`
-          : `<div class="card empty">Everyone broke even. Nobody owes anything 🤝</div>`}
+              <span><b>${esc(t.from.name)}</b><span class="arrow">→</span><b>${esc(t.to.name)}</b></span>
+              <span class="amt">${money(t.amt)}</span></li>`).join("")}</ul>
+             <div class="row" style="margin-top:12px"><button class="btn small" id="copy">Copy summary</button></div>`
+          : `<div class="card empty">Everyone broke even. Nobody owes anything.</div>`, 4)}
 
-        <h2>Leaderboard</h2>
-        <div class="podium">
-          <div class="card"><span class="crown">👑</span><div class="lbl">Top winner</div><div class="who">${esc(top.p.name)}</div><div class="amt num ${top.net > 0 ? "pos" : ""}">${money(top.net, true)}</div></div>
-          <div class="card"><span class="crown">🐟</span><div class="lbl">Biggest loser</div><div class="who">${esc(bottom.p.name)}</div><div class="amt num ${bottom.net < 0 ? "neg" : ""}">${money(bottom.net, true)}</div></div>
-        </div>
-        <div class="card" style="margin-top:10px">
-          <ul class="board" style="margin:0">${ranked.map((r) => {
-            const w = (Math.abs(r.net) / maxAbs) * 50;
-            return `<li>${avatar(r.p)}<span style="width:84px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.p.name)}</span>
-              <span class="bar-wrap"><span class="bar-fill" style="${r.net >= 0 ? `left:50%;width:${w}%;background:var(--green)` : `right:50%;width:${w}%;background:var(--red)`}"></span></span>
-              <span class="num ${r.net > 0 ? "pos" : r.net < 0 ? "neg" : "muted"}" style="width:72px;text-align:right;font-weight:700">${money(r.net, true)}</span></li>`;
-          }).join("")}</ul>
-        </div>` : ""}
+        ${sec("Leaderboard", `
+          <div class="podium">
+            <div class="card"><div class="lbl"><span class="sym pos">▲</span>Top winner</div><div class="who">${esc(top.p.name)}</div><div class="amt ${top.net > 0 ? "pos" : ""}">${money(top.net, true)}</div></div>
+            <div class="card"><div class="lbl"><span class="sym neg">▼</span>Biggest loser</div><div class="who">${esc(bottom.p.name)}</div><div class="amt ${bottom.net < 0 ? "neg" : ""}">${money(bottom.net, true)}</div></div>
+          </div>
+          <div class="card" style="margin-top:12px">
+            <ul class="board ${growBars ? "grow" : ""}">${ranked.map((r, i) => {
+              const w = (Math.abs(r.net) / maxAbs) * 50;
+              return `<li><span class="rank">${String(i + 1).padStart(2, "0")}</span>${avatar(r.p)}<span class="nm">${esc(r.p.name)}</span>
+                <span class="bar-wrap"><span class="bar-fill" style="${r.net >= 0 ? `left:50%;width:${w}%;background:var(--green);--o:left` : `right:50%;width:${w}%;background:var(--red);--o:right`}"></span></span>
+                <span class="val ${r.net > 0 ? "pos" : r.net < 0 ? "neg" : "muted"}">${money(r.net, true)}</span></li>`;
+            }).join("")}</ul>
+          </div>`, 5)}` : ""}
 
       <div class="bar"><div class="bar-inner">
-        <button class="btn" id="back">← Table</button>
+        <button class="btn" id="back">Back to table</button>
         <button class="btn primary grow" id="newGame">New game</button>
       </div></div>`;
 
@@ -520,7 +570,7 @@
     });
     const any = $("#anyway"); if (any) any.onchange = () => commit((s) => { s.settleAnyway = any.checked; });
     const cp = $("#copy"); if (cp) cp.onclick = () => copySummary(transfers, ranked);
-    $("#back").onclick = () => commit((s) => { s.stage = "table"; });
+    $("#back").onclick = () => go((s) => { s.stage = "table"; });
     $("#newGame").onclick = confirmReset;
   }
 
@@ -640,7 +690,7 @@
       <div class="row" style="margin-top:14px"><button class="btn" data-close>Cancel</button><button class="btn danger" id="wipe">Clear all</button><button class="btn primary grow" id="keep">Keep players</button></div>`, (m) => {
       const go = (keep) => {
         modal.close();
-        commit((s) => {
+        go((s) => {
           const players = keep ? s.players.map((p) => ({ ...p, busted: false, final: null })) : [];
           Object.assign(s, fresh(), { buyIn: s.buyIn, players });
         }, { undoable: true, msg: "New game" });
@@ -698,15 +748,15 @@
     const a = center(fromEl), b = center(pot);
     for (let i = 0; i < count; i++) {
       const c = color || CHIP_COLORS[i % CHIP_COLORS.length];
-      const el = spawn("fx-chip", "", { left: a.x - 17 + "px", top: a.y - 17 + "px", "--c": c });
+      const el = spawn("fx-chip", "", { left: a.x - 15 + "px", top: a.y - 15 + "px" });
       el.style.setProperty("--c", c);
-      const dx = b.x - a.x + rand(-60, 60), dy = b.y - a.y + rand(-20, 20);
-      const mx = dx / 2 + rand(-80, 80), my = Math.min(dy / 2, 0) - rand(80, 160);
+      const dx = b.x - a.x + rand(-30, 30), dy = b.y - a.y + rand(-12, 12);
+      const mx = dx / 2 + rand(-30, 30), my = Math.min(dy / 2, 0) - rand(40, 80);
       animate(el, [
-        { transform: "translate(0,0) scale(.4) rotate(0)", opacity: 0 },
-        { transform: `translate(${mx}px,${my}px) scale(1.1) rotate(${rand(180, 360)}deg)`, opacity: 1, offset: .5 },
-        { transform: `translate(${dx}px,${dy}px) scale(.7) rotate(${rand(400, 720)}deg)`, opacity: 0 },
-      ], { duration: rand(700, 1000), delay: i * 45, easing: "cubic-bezier(.3,.6,.4,1)" });
+        { transform: "translate(0,0) scale(.5)", opacity: 0 },
+        { transform: `translate(${mx}px,${my}px) scale(.9)`, opacity: 1, offset: .45 },
+        { transform: `translate(${dx}px,${dy}px) scale(.6)`, opacity: 0 },
+      ], { duration: rand(750, 950), delay: i * 50, easing: "cubic-bezier(.65,0,.35,1)" });
     }
     setTimeout(bumpPot, reduced ? 0 : 700);
   }
@@ -714,46 +764,48 @@
   function floatText(text, at, color) {
     const el = spawn("fx-float", esc(text), { left: at.x + "px", top: at.y + "px", color });
     animate(el, [
-      { transform: "translate(-50%,-50%) scale(.5)", opacity: 0 },
-      { transform: "translate(-50%,-120%) scale(1.15)", opacity: 1, offset: .25 },
-      { transform: "translate(-50%,-260%) scale(1)", opacity: 0 },
-    ], { duration: 1400, easing: "cubic-bezier(.2,.8,.3,1)" });
+      { transform: "translate(-50%,-30%)", opacity: 0 },
+      { transform: "translate(-50%,-110%)", opacity: 1, offset: .3 },
+      { transform: "translate(-50%,-190%)", opacity: 0 },
+    ], { duration: 1300, easing: "cubic-bezier(.22,1,.36,1)" });
   }
 
-  function chipBurst(fromEl, color, n = 10) {
+  function chipBurst(fromEl, color, n = 8) {
     const a = center(fromEl);
     for (let i = 0; i < n; i++) {
-      const el = spawn("fx-chip", "", { left: a.x - 17 + "px", top: a.y - 17 + "px" });
+      const el = spawn("fx-chip", "", { left: a.x - 15 + "px", top: a.y - 15 + "px" });
       el.style.setProperty("--c", color || CHIP_COLORS[i % CHIP_COLORS.length]);
-      const ang = (Math.PI * 2 * i) / n + rand(-.3, .3), d = rand(50, 110);
+      const ang = (Math.PI * 2 * i) / n + rand(-.2, .2), d = rand(44, 80);
       animate(el, [
-        { transform: "translate(0,0) scale(.3)", opacity: 1 },
-        { transform: `translate(${Math.cos(ang) * d}px,${Math.sin(ang) * d}px) scale(.8) rotate(${rand(-360, 360)}deg)`, opacity: 1, offset: .6 },
-        { transform: `translate(${Math.cos(ang) * d * 1.2}px,${Math.sin(ang) * d * 1.2 + 60}px) scale(.6)`, opacity: 0 },
-      ], { duration: 800, easing: "cubic-bezier(.2,.9,.3,1)" });
+        { transform: "translate(0,0) scale(.4)", opacity: 0 },
+        { transform: `translate(${Math.cos(ang) * d}px,${Math.sin(ang) * d}px) scale(.75)`, opacity: 1, offset: .55 },
+        { transform: `translate(${Math.cos(ang) * d * 1.15}px,${Math.sin(ang) * d * 1.15}px) scale(.6)`, opacity: 0 },
+      ], { duration: 700, easing: "cubic-bezier(.22,1,.36,1)" });
     }
   }
 
-  function banner(text, color, frames) {
-    const el = spawn("fx-banner", esc(text), { color });
-    animate(el, frames || [
-      { transform: "translate(-50%,-50%) scale(.3) rotate(-12deg)", opacity: 0 },
-      { transform: "translate(-50%,-50%) scale(1.1) rotate(3deg)", opacity: 1, offset: .2 },
-      { transform: "translate(-50%,-50%) scale(1) rotate(-2deg)", opacity: 1, offset: .7 },
-      { transform: "translate(-50%,-80%) scale(.9)", opacity: 0 },
-    ], { duration: 1500, easing: "cubic-bezier(.2,1,.3,1)" });
+  // a word rises out of its mask, holds, and lifts away
+  function banner(text, color = "var(--ink)") {
+    const el = spawn("fx-banner", `<span>${esc(text)}</span>`, { color });
+    if (reduced) { el.remove(); return; }
+    el.firstChild.animate([
+      { transform: "translateY(110%)" },
+      { transform: "translateY(0)", offset: .28 },
+      { transform: "translateY(0)", offset: .74 },
+      { transform: "translateY(-110%)" },
+    ], { duration: 1500, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards" }).onfinish = () => el.remove();
   }
 
-  // BUY-IN: deal chips from every player card into the pot
+  // BUY-IN: chips leave every seat for the pot
   function dealAnimation() {
     requestAnimationFrame(() => {
-      banner("Shuffle up!", "var(--gold)");
-      app.querySelectorAll(".pcard").forEach((card, i) => {
+      banner("Shuffle up");
+      state.players.forEach((p, i) => {
         setTimeout(() => {
-          card.classList.add("flash-in");
-          const seat = app.querySelector(`.seat[data-seat="${card.dataset.pid}"] .avatar`);
-          chipsToPot(seat || card.querySelector(".avatar"), 4, CHIP_COLORS[i % CHIP_COLORS.length]);
-        }, 250 + i * 140);
+          const seat = app.querySelector(`.seat[data-seat="${p.id}"] .avatar`);
+          app.querySelector(`.pcard[data-pid="${p.id}"]`)?.classList.add("flash-in");
+          chipsToPot(seat, 3, CHIP_COLORS[i % CHIP_COLORS.length]);
+        }, 200 + i * 110);
       });
     });
   }
@@ -761,101 +813,90 @@
     requestAnimationFrame(() => {
       const card = app.querySelector(`.pcard[data-pid="${p.id}"]`);
       if (card) card.classList.add("flash-in");
-      const av = card?.querySelector(".avatar");
-      floatText(`+${money(amount)}`, center(av), "var(--green)");
-      chipsToPot(av, 8, p.color);
-      banner("Welcome!", p.color);
+      const seat = app.querySelector(`.seat[data-seat="${p.id}"] .avatar`);
+      floatText(`+${money(amount)}`, center(seat), "var(--green)");
+      chipsToPot(seat, 6, p.color);
+      banner(`Welcome, ${p.name}`);
     });
   }
 
-  // REBUY: chip fountain, "+$X", and a "back from the dead" moment if busted
+  // REBUY: the seat sends chips to the pot; a busted player comes back
   function rebuyAnimation(p, amount, wasBusted) {
     requestAnimationFrame(() => {
       const card = app.querySelector(`.pcard[data-pid="${p.id}"]`);
-      const av = card?.querySelector(".avatar");
       if (card) { card.classList.remove("flash-in"); void card.offsetWidth; card.classList.add("flash-in"); }
-      floatText(`+${money(amount)}`, center(av), "var(--green)");
-      chipBurst(av, null, 12);
-      setTimeout(() => chipsToPot(av, Math.min(14, 4 + Math.round(amount / state.buyIn) * 3)), 250);
-      if (wasBusted) banner("Back from the dead 🧟", "var(--green)");
-      else if (amount > state.buyIn) banner("Reloading 💰", "var(--gold)");
-      else banner("Rebuy!", p.color);
+      const seat = app.querySelector(`.seat[data-seat="${p.id}"] .avatar`);
+      floatText(`+${money(amount)}`, center(seat), "var(--green)");
+      chipBurst(seat, null, 8);
+      setTimeout(() => chipsToPot(seat, Math.min(10, 3 + Math.round(amount / state.buyIn) * 2)), 200);
+      banner(wasBusted ? "Back from the dead" : amount > state.buyIn ? "Reloading" : "Rebuy");
     });
   }
 
-  // BUST: card shakes, screen cracks, skulls rain down
+  // BUST: the card shudders once, thin red fracture lines draw out from the seat and fade
   function bustAnimation(p, oldCard) {
     requestAnimationFrame(() => {
       const card = app.querySelector(`.pcard[data-pid="${p.id}"]`);
-      if (card) { card.classList.add("shake"); }
-      const at = center(card || oldCard);
+      if (card) card.classList.add("shake");
+      const seat = app.querySelector(`.seat[data-seat="${p.id}"] .avatar`);
+      const at = center(seat || card || oldCard);
       if (reduced) return;
-      // crack lines radiating from the card
       const svgNS = "http://www.w3.org/2000/svg";
       const svg = document.createElementNS(svgNS, "svg");
       svg.setAttribute("class", "fx-crack");
       svg.setAttribute("width", innerWidth); svg.setAttribute("height", innerHeight);
-      for (let i = 0; i < 9; i++) {
+      for (let i = 0; i < 7; i++) {
         let x = at.x, y = at.y, d = `M${x},${y}`;
-        const ang = (Math.PI * 2 * i) / 9 + rand(-.2, .2);
-        for (let s = 0; s < 5; s++) {
-          const len = rand(30, 70);
-          const a2 = ang + rand(-.5, .5);
-          x += Math.cos(a2) * len; y += Math.sin(a2) * len; d += ` L${x},${y}`;
+        const ang = (Math.PI * 2 * i) / 7 + rand(-.25, .25);
+        for (let s = 0; s < 4; s++) {
+          const len = rand(26, 56), a2 = ang + rand(-.45, .45);
+          x += Math.cos(a2) * len; y += Math.sin(a2) * len; d += ` L${x.toFixed(1)},${y.toFixed(1)}`;
         }
         const path = document.createElementNS(svgNS, "path");
-        path.setAttribute("d", d);
-        path.setAttribute("fill", "none");
-        path.setAttribute("stroke", "var(--red)");
-        path.setAttribute("stroke-width", "2.5");
-        path.setAttribute("stroke-linecap", "round");
-        path.style.strokeDasharray = 400; path.style.strokeDashoffset = 400;
-        path.animate([{ strokeDashoffset: 400 }, { strokeDashoffset: 0 }], { duration: 350, fill: "forwards", easing: "ease-out" });
+        path.setAttribute("d", d); path.setAttribute("fill", "none");
+        path.setAttribute("stroke", "var(--red)"); path.setAttribute("stroke-width", "1.2");
+        path.setAttribute("pathLength", "1");
+        path.style.strokeDasharray = 1; path.style.strokeDashoffset = 1;
+        path.animate([{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }], { duration: 420, delay: i * 25, fill: "forwards", easing: "cubic-bezier(.22,1,.36,1)" });
         svg.appendChild(path);
       }
       fx.appendChild(svg);
-      svg.animate([{ opacity: 1 }, { opacity: 1, offset: .6 }, { opacity: 0 }], { duration: 1300, fill: "forwards" }).onfinish = () => svg.remove();
-
-      // falling skulls & cards
-      const icons = ["💀", "💀", "🃏", "💸", "☠️"];
-      for (let i = 0; i < 14; i++) {
-        const el = spawn("fx-emoji", icons[i % icons.length], { left: rand(0, innerWidth - 30) + "px", top: "-50px" });
-        animate(el, [
-          { transform: `translateY(0) rotate(${rand(-30, 30)}deg)`, opacity: 1 },
-          { transform: `translateY(${innerHeight + 100}px) rotate(${rand(-360, 360)}deg)`, opacity: .9 },
-        ], { duration: rand(1400, 2200), delay: rand(0, 400), easing: "cubic-bezier(.5,0,.8,.6)" });
-      }
-      banner("BUSTED", "var(--red)", [
-        { transform: "translate(-50%,-50%) scale(2.4)", opacity: 0, filter: "blur(8px)" },
-        { transform: "translate(-50%,-50%) scale(1)", opacity: 1, filter: "blur(0)", offset: .15 },
-        { transform: "translate(-48%,-50%) scale(1)", opacity: 1, offset: .2 },
-        { transform: "translate(-52%,-50%) scale(1)", opacity: 1, offset: .25 },
-        { transform: "translate(-50%,-50%) scale(1)", opacity: 1, offset: .75 },
-        { transform: "translate(-50%,-30%) scale(.9) rotate(8deg)", opacity: 0 },
-      ]);
-      document.body.animate([
-        { transform: "translate(0,0)" }, { transform: "translate(-6px,3px)" }, { transform: "translate(5px,-4px)" },
-        { transform: "translate(-3px,2px)" }, { transform: "translate(0,0)" },
-      ], { duration: 350, delay: 120 });
+      svg.animate([{ opacity: 1 }, { opacity: 1, offset: .55 }, { opacity: 0 }], { duration: 1400, fill: "forwards" }).onfinish = () => svg.remove();
+      banner(`${p.name} is out`, "var(--red)");
     });
   }
 
   function confetti() {
     if (reduced) return;
-    const colors = [...CHIP_COLORS, "#ffffff"];
-    for (let i = 0; i < 70; i++) {
-      const el = spawn("fx-chip", "", { left: innerWidth / 2 + "px", top: innerHeight * .45 + "px", width: "14px", height: "14px" });
-      el.style.setProperty("--c", colors[i % colors.length]);
-      const ang = rand(-Math.PI, 0), v = rand(220, 520);
+    for (let i = 0; i < 28; i++) {
+      const el = spawn("fx-chip", "", { left: innerWidth / 2 - 11 + "px", top: innerHeight * .42 + "px", width: "22px", height: "22px" });
+      el.style.setProperty("--c", CHIP_COLORS[i % CHIP_COLORS.length]);
+      const ang = -Math.PI / 2 + rand(-1.1, 1.1), v = rand(160, 320);
       const dx = Math.cos(ang) * v, dy = Math.sin(ang) * v;
       animate(el, [
-        { transform: "translate(0,0) scale(.4)", opacity: 1 },
-        { transform: `translate(${dx}px,${dy}px) rotate(${rand(0, 720)}deg) scale(1)`, opacity: 1, offset: .4 },
-        { transform: `translate(${dx * 1.2}px,${dy + innerHeight * .7}px) rotate(${rand(720, 1440)}deg) scale(.8)`, opacity: 0 },
-      ], { duration: rand(1600, 2400), easing: "cubic-bezier(.15,.7,.4,1)" });
+        { transform: "translate(0,0) scale(.5)", opacity: 0 },
+        { transform: `translate(${dx}px,${dy}px) scale(1)`, opacity: 1, offset: .45 },
+        { transform: `translate(${dx * 1.1}px,${dy + 260}px) scale(.8)`, opacity: 0 },
+      ], { duration: rand(1300, 1800), delay: rand(0, 120), easing: "cubic-bezier(.22,1,.36,1)" });
     }
-    banner("Balanced ✓", "var(--green)");
+    banner("Balanced", "var(--green)");
   }
+
+  // shortcuts: N seat or add a player, D deal, C count the chips; never while typing or in a dialog
+  addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || modal.open) return;
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return;
+    const k = e.key.toLowerCase();
+    if (k === "n") {
+      e.preventDefault();
+      if (state.stage === "setup") $("#nameIn")?.focus();
+      else if (state.stage === "table") openAddLate();
+    } else if (k === "d" && state.stage === "setup") {
+      const b = $("#start"); if (b && !b.disabled) b.click();
+    } else if (k === "c" && state.stage === "table") {
+      $("#toSettle")?.click();
+    }
+  });
 
   $("#brand").onclick = () => { if (state.stage !== "setup" && !state.log.length) commit((s) => { s.stage = "setup"; }); };
 
