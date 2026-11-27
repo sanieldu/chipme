@@ -810,3 +810,31 @@ h2 { font-weight: 600; letter-spacing: -.01em; }
 
 /* readable grey on glass */
 .muted { color: var(--muted); }
+
+/* =====================================================================
+   The table: ivory felt in light oak, tilted back in perspective
+   ===================================================================== */
+.poker { container-type: inline-size; }
+.tilt { perspective: 190cqw; perspective-origin: 50% 50%; }
+.surface { position: relative; transform: rotateX(26deg); transform-origin: 50% 50%; transform-style: preserve-3d; }
+.surface .felt-center { position: absolute; inset: 0; }
+.plan { overflow: visible; filter: drop-shadow(0 30px 28px rgba(80, 52, 24, .32)) drop-shadow(0 6px 8px rgba(80, 52, 24, .22)); }
+.plan .rail-side { fill: url(#sideG); stroke: rgba(60, 38, 16, .6); stroke-width: 1.2; }
+.plan .rail-o { fill: url(#railG); stroke: #8a5f31; stroke-width: 1.4; }
+.plan .rail-grain { fill: url(#grainP); stroke: none; }
+.plan .rail-sheen { fill: none; stroke: rgba(255, 246, 228, .55); stroke-width: 2.5; }
+.plan .rail-stitch { fill: none; stroke: rgba(96, 62, 26, .38); stroke-width: 1.4; stroke-dasharray: none; }
+.plan .rail-gold { fill: none; stroke: url(#goldG); stroke-width: 2.6; }
+.plan .rail-i { fill: url(#feltG); stroke: rgba(120, 88, 48, .45); stroke-width: 3; }
+.plan .felt-glow { fill: url(#glowG); stroke: none; }
+.plan .bet { stroke: rgba(110, 84, 48, .35); }
+.plan .tick { stroke: rgba(110, 84, 48, .32); }
+.poker.draw .plan .rail-grain, .poker.draw .plan .rail-side { opacity: 0; animation: fadeIn 1s var(--ease) .5s forwards; }
+.felt-label { color: rgba(84, 62, 34, .72); font-weight: 500; letter-spacing: .02em; }
+.seat .avatar { box-shadow: inset 0 0 0 2px var(--av), 0 0 0 3px rgba(255, 255, 255, .7), 0 8px 16px rgba(60, 40, 20, .3); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .plan .rail-i { filter: brightness(.94); }
+}
+/* the tilt eats some height: pull the space in so the table doesn't float */
+.poker { margin-top: 40px; margin-bottom: 40px; }
+@media (max-width: 560px) { .poker.crowd { margin-top: 48px; margin-bottom: 52px; } }

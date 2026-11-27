@@ -288,15 +288,24 @@
   /* ----- the poker table: one seat per player, spaced evenly around the rail ----- */
   let seatPos = {};   // pid -> [x%, y%] from the last render, so seats glide when one is added
   // the table as a technical drawing: outer rail, felt edge, dashed betting line, ticks and a dimension line
+  // The table: ivory felt in a light-oak rail with grain, a carved groove and a brass inlay,
+  // drawn flat and then tilted back in real perspective. A darker oak edge underneath gives it depth.
   const PLAN = `<svg class="plan" viewBox="0 0 1000 560" preserveAspectRatio="none" aria-hidden="true">
       <defs>
-        <radialGradient id="feltG" cx="50%" cy="42%" r="68%"><stop offset="0" stop-color="#24774d"/><stop offset=".62" stop-color="#17593a"/><stop offset="1" stop-color="#0e3d28"/></radialGradient>
-        <linearGradient id="railG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#46403c"/><stop offset=".38" stop-color="#211e1c"/><stop offset="1" stop-color="#0b0a0a"/></linearGradient>
-        <linearGradient id="goldG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f3dc9b"/><stop offset=".5" stop-color="#b8893e"/><stop offset="1" stop-color="#e8c977"/></linearGradient>
-        <radialGradient id="glowG" cx="50%" cy="30%" r="60%"><stop offset="0" stop-color="#ffffff" stop-opacity=".16"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></radialGradient>
+        <radialGradient id="feltG" cx="50%" cy="40%" r="70%"><stop offset="0" stop-color="#fbf7ee"/><stop offset=".6" stop-color="#efe6d3"/><stop offset="1" stop-color="#ddd0b4"/></radialGradient>
+        <linearGradient id="railG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e2bd86"/><stop offset=".5" stop-color="#c4955b"/><stop offset="1" stop-color="#a0723f"/></linearGradient>
+        <linearGradient id="sideG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#93663a"/><stop offset="1" stop-color="#5e3f20"/></linearGradient>
+        <linearGradient id="goldG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e9cf8e"/><stop offset=".5" stop-color="#9c7434"/><stop offset="1" stop-color="#d9b56a"/></linearGradient>
+        <radialGradient id="glowG" cx="50%" cy="28%" r="62%"><stop offset="0" stop-color="#ffffff" stop-opacity=".55"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></radialGradient>
+        <pattern id="grainP" width="160" height="12" patternUnits="userSpaceOnUse">
+          <path d="M0 3 Q40 1 80 3 T160 3" stroke="rgba(110,70,30,.20)" stroke-width="1.2" fill="none"/>
+          <path d="M0 8 Q45 10 90 8 T160 8" stroke="rgba(110,70,30,.12)" stroke-width="1" fill="none"/>
+        </pattern>
       </defs>
+      <rect class="rail-side" x="8" y="30" width="984" height="544" rx="272"/>
       <rect class="rail-o d" pathLength="1" x="8" y="8" width="984" height="544" rx="272"/>
-      <rect class="rail-sheen" x="18" y="18" width="964" height="524" rx="262"/>
+      <rect class="rail-grain" x="8" y="8" width="984" height="544" rx="272"/>
+      <rect class="rail-sheen" x="16" y="16" width="968" height="528" rx="264"/>
       <rect class="rail-stitch" x="27" y="27" width="946" height="506" rx="253"/>
       <rect class="rail-gold" x="38" y="38" width="924" height="484" rx="242"/>
       <rect class="rail-i d" pathLength="1" x="44" y="44" width="912" height="472" rx="236"/>
@@ -304,13 +313,24 @@
       <rect class="bet" x="170" y="140" width="660" height="280" rx="140"/>
       <path class="tick" d="M500 44v14M500 502v14M44 280h14M942 280h14"/>
     </svg>`;
+  // Where a point on the flat table (in %) lands once the surface is tilted back: the same maths
+  // the browser uses for rotateX + perspective, so seats and chips sit exactly on the drawing
+  // while staying upright themselves.
+  const TILT = (26 * Math.PI) / 180, PERSP = 1.9;   // perspective distance, in table widths
+  function project(x, y, aspect) {
+    const X = (x - 50) / 100, Y = ((y - 50) / 100) * aspect;
+    const z = Y * Math.sin(TILT), k = PERSP / (PERSP - z);
+    return [50 + X * k * 100, 50 + ((Y * Math.cos(TILT) * k) / aspect) * 100];
+  }
   function tableHTML(mode, draw) {
     const ps = state.players;
     const n = ps.length;
+    const crowd = n >= 7;
+    const aspect = crowd && matchMedia("(max-width: 560px)").matches ? 1 / 1.12 : 0.56;
     const seats = ps.map((p, i) => {
       const a = Math.PI / 2 + (i * 2 * Math.PI) / Math.max(n, 1);
-      const x = 50 + 50 * Math.cos(a), y = 50 + 50 * Math.sin(a);
-      const sx = 50 + 32 * Math.cos(a), sy = 48 + 19 * Math.sin(a);   // stack spot on the felt
+      const [x, y] = project(50 + 50 * Math.cos(a), 50 + 50 * Math.sin(a), aspect);
+      const [sx, sy] = project(50 + 32 * Math.cos(a), 48 + 21 * Math.sin(a), aspect);   // stack spot on the felt
       const tin = totalIn(p.id);
       const stack = mode === "table" && tin > 0 && seated(p)
         ? `<div class="felt-stack" style="left:${sx}%;top:${sy}%">${clusterHTML(tin, CHIP_COLORS[i % 7])}</div>` : "";
@@ -325,8 +345,8 @@
       ? (state.blinds ? `No-limit · ${blindsText(state.blinds)}` : "No-limit hold'em")
       : n ? `${n} seat${n === 1 ? "" : "s"} taken` : "Add a player to take a seat";
     const center = `<div class="felt-center"><span class="felt-label">${label}</span></div>`;
-    return `<div class="poker ${mode} ${n >= 7 ? "crowd" : ""} ${draw && !reduced ? "draw" : ""}">
-      ${PLAN}${center}
+    return `<div class="poker ${mode} ${crowd ? "crowd" : ""} ${draw && !reduced ? "draw" : ""}">
+      <div class="tilt"><div class="surface">${PLAN}${center}</div></div>
       <div class="seats">${seats}</div>
     </div>`;
   }
