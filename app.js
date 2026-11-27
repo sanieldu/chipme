@@ -292,11 +292,15 @@
       <defs>
         <radialGradient id="feltG" cx="50%" cy="42%" r="68%"><stop offset="0" stop-color="#24774d"/><stop offset=".62" stop-color="#17593a"/><stop offset="1" stop-color="#0e3d28"/></radialGradient>
         <linearGradient id="railG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#46403c"/><stop offset=".38" stop-color="#211e1c"/><stop offset="1" stop-color="#0b0a0a"/></linearGradient>
+        <linearGradient id="goldG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f3dc9b"/><stop offset=".5" stop-color="#b8893e"/><stop offset="1" stop-color="#e8c977"/></linearGradient>
+        <radialGradient id="glowG" cx="50%" cy="30%" r="60%"><stop offset="0" stop-color="#ffffff" stop-opacity=".16"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></radialGradient>
       </defs>
       <rect class="rail-o d" pathLength="1" x="8" y="8" width="984" height="544" rx="272"/>
       <rect class="rail-sheen" x="18" y="18" width="964" height="524" rx="262"/>
       <rect class="rail-stitch" x="27" y="27" width="946" height="506" rx="253"/>
+      <rect class="rail-gold" x="38" y="38" width="924" height="484" rx="242"/>
       <rect class="rail-i d" pathLength="1" x="44" y="44" width="912" height="472" rx="236"/>
+      <rect class="felt-glow" x="44" y="44" width="912" height="472" rx="236"/>
       <rect class="bet" x="170" y="140" width="660" height="280" rx="140"/>
       <path class="tick" d="M500 44v14M500 502v14M44 280h14M942 280h14"/>
     </svg>`;
@@ -320,7 +324,7 @@
     const label = mode === "table"
       ? (state.blinds ? `No-limit · ${blindsText(state.blinds)}` : "No-limit hold'em")
       : n ? `${n} seat${n === 1 ? "" : "s"} taken` : "Add a player to take a seat";
-    const center = `<div class="felt-center"><span class="felt-logo">chipme</span><span class="felt-label">${label}</span></div>`;
+    const center = `<div class="felt-center"><span class="felt-label">${label}</span></div>`;
     return `<div class="poker ${mode} ${n >= 7 ? "crowd" : ""} ${draw && !reduced ? "draw" : ""}">
       ${PLAN}${center}
       <div class="seats">${seats}</div>
